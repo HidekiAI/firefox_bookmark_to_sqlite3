@@ -1,0 +1,93 @@
+{
+    "guid": "root________",
+    "title": "",
+    "index": 0,
+    "dateAdded": 1687548918712000,
+    "lastModified": 1689519935422000,
+    "id": 1,
+    "typeCode": 2,
+    "type": "text/x-moz-place-container",
+    "root": "placesRoot",
+    "children": [
+        {
+            "guid": "menu________",
+            "title": "menu",
+            "index": 0,
+            "dateAdded": 1687548918712000,
+            "lastModified": 1688395173395000,
+            "id": 2,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "bookmarksMenuFolder",
+            "children": [
+                {
+                    "guid": "A8NUOjpsRO1f",
+                    "title": "",
+                    "index": 0,
+                    "dateAdded": 1687548920094000,
+                    "lastModified": 1687548920094000,
+                    "id": 15,
+                    "typeCode": 3,
+                    "type": "text/x-moz-place-separator"
+                }
+            ]
+        },
+        {
+            "guid": "toolbar_____",
+            "title": "toolbar",
+            "index": 1,
+            "dateAdded": 1687548918712000,
+            "lastModified": 1689519935422000,
+            "id": 3,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "toolbarFolder",
+            "children": [
+                {
+                    "guid": "Npno2qvkXy1F",
+                    "title": "Downloads",
+                    "index": 0,
+                    "dateAdded": 1688676588125000,
+                    "lastModified": 1688676595137000,
+                    "id": 19,
+                    "typeCode": 1,
+                    "type": "text/x-moz-place",
+                    "uri": "about:downloads"
+                },
+                {
+                    "guid": "EvEy7VW_sMTG",
+                    "title": "ゆるキャン△",
+                    "index": 1,
+                    "dateAdded": 1689519634292000,
+                    "lastModified": 1689519634292000,
+                    "id": 20,
+                    "typeCode": 1,
+                    "type": "text/x-moz-place",
+                    "uri": "https://some-site/page-of-this-manga"
+                }
+            ]
+        },
+        {
+            "guid": "unfiled_____",
+            "title": "unfiled",
+            "index": 3,
+            "dateAdded": 1687548918712000,
+            "lastModified": 1687548919979000,
+            "id": 5,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "unfiledBookmarksFolder"
+        },
+        {
+            "guid": "mobile______",
+            "title": "mobile",
+            "index": 4,
+            "dateAdded": 1687548918955000,
+            "lastModified": 1687548919979000,
+            "id": 6,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "mobileFolder"
+        }
+    ]
+}
