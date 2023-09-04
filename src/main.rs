@@ -1,16 +1,12 @@
-use chrono::NaiveDateTime;
-
 mod model_json; // this is the same as `mod model_json; pub use model_json::*;`
 
 mod json_to_csv {
     //use serde_json::Value;
+    use crate::model_json::model_json::{BookmarkNodes, BookmarkRootFolder};
     use std::{
-        any::Any,
         fs::File,
         io::{self, BufRead, BufReader, BufWriter, Write},
     };
-
-    use crate::model_json::model_json::{BookmarkNodes, BookmarkRootFolder};
 
     pub fn parse_args(
         args: Vec<String>,
@@ -160,7 +156,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // read in JSON either from stdin or file
-    let (mut input_reader, mut output_writer) = match json_to_csv::parse_args(args) {
+    let (input_reader, output_writer) = match json_to_csv::parse_args(args) {
         Ok((input_reader, output_writer)) => (input_reader, output_writer),
         Err(e) => {
             println!("{}", e);
@@ -169,11 +165,14 @@ fn main() {
     };
 
     // read in JSON and deserialize it as Bookmark structure
-    let bookmark_folders: Result<model_json::model_json::BookmarkRootFolder, _> = serde_json::from_reader(input_reader);
+    let bookmark_folders: Result<model_json::model_json::BookmarkRootFolder, _> =
+        serde_json::from_reader(input_reader);
     let bookmarks: Vec<model_json::model_json::BookmarkNodes> = match bookmark_folders {
         Ok(bookmark_folders) => {
             // recursively visit each child and return Some tuple if it is bookmark, else return None for containers and separators
-            fn traverse_children(children: &Vec<model_json::model_json::BookmarkNodes>) -> Vec<model_json::model_json::BookmarkNodes> {
+            fn traverse_children(
+                children: &Vec<model_json::model_json::BookmarkNodes>,
+            ) -> Vec<model_json::model_json::BookmarkNodes> {
                 let mut bookmarks: Vec<model_json::model_json::BookmarkNodes> = Vec::new();
                 for child in children {
                     if child.is_bookmark() {
@@ -197,20 +196,24 @@ fn main() {
     bookmarks_sorted.sort_by(|a, b| a.last_modified().cmp(&b.last_modified()));
     // CSV output, we're assuming that by here, only the "places" nodes are left, so we can just print them out in CSV format
     // either to the stdout or to the output file stream
-    let mut csv_writer = csv::Writer::from_writer(output_writer); // .lock()
+    let mut csv_writer = csv::WriterBuilder::new()
+        .quote_style(csv::QuoteStyle::Always)   // just easier to just quote everything including numbers
+        .from_writer(output_writer);
     for bookmark in bookmarks_sorted {
-        let mut record = csv::StringRecord::new();
-        record.push_field(&bookmark.title());
-        record.push_field(&bookmark.uri());
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
             bookmark.last_modified() / 1_000_000,
             (bookmark.last_modified() % 1_000_000) as u32,
         )
         .unwrap();
-        record.push_field(&last_modified.format("%Y-%m-%d %H:%M:%S").to_string());
+        // output: "title","uri","chapter","last_modified","notes","tags"
+        let mut record = csv::StringRecord::new();
+        record.push_field(&bookmark.title());
+        record.push_field(&bookmark.uri());
+        record.push_field("0");
+        record.push_field(&last_modified.format("%Y-%m-%dT%H:%M:%S").to_string());
+        record.push_field("-");
+        record.push_field("#");
         csv_writer.write_record(&record).unwrap();
     }
-    // clean up and close
-    //output_writer.flush().unwrap();
 }
