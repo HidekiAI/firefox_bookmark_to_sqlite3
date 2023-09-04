@@ -2,7 +2,7 @@ mod model_json; // this is the same as `mod model_json; pub use model_json::*;`
 
 mod json_to_csv {
     //use serde_json::Value;
-    use crate::model_json::model_json::{BookmarkNodes, BookmarkRootFolder};
+    
     use std::{
         fs::File,
         io::{self, BufRead, BufReader, BufWriter, Write},
