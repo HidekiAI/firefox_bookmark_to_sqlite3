@@ -1,6 +1,6 @@
 //extern crate serde_derive;
 // data model (schema) for json serde
-pub mod model_json {
+pub mod model_json_mozilla_bookmarks {
     use serde::{Deserialize, Serialize};
     use std::fmt::Debug;
 

@@ -1,11 +1,16 @@
-mod model_json; // this is the same as `mod model_json; pub use model_json::*;`
+mod model_csv_manga;
+mod model_json_mozilla_bookmarks; // this is the same as `mod model_json; pub use model_json::*;`
 
 mod json_to_csv {
     //use serde_json::Value;
-    
+
     use std::{
         fs::File,
         io::{self, BufRead, BufReader, BufWriter, Write},
+    };
+
+    use crate::model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
+        BookmarkNodes, BookmarkRootFolder,
     };
 
     pub fn parse_args(
@@ -92,7 +97,7 @@ mod json_to_csv {
             String::from("/dev/shm/output.csv"),
         ];
         match parse_args(args) {
-            Ok((mut input, mut output)) => {
+            Ok((_input, mut output)) => {
                 // clean up and close
                 output.flush().unwrap();
             }
@@ -104,7 +109,7 @@ mod json_to_csv {
         // read test JSON files and attempt to deserialize it
         let args = vec![String::from("-i"), String::from("tests/input.json")];
         match parse_args(args) {
-            Ok((mut input, mut output)) => {
+            Ok((input, mut output)) => {
                 // deserialize - from_reader() method needs to access io::Read::bytes() method
 
                 //// For now, read the whol buffer into memory and pass that on
@@ -165,40 +170,54 @@ fn main() {
     };
 
     // read in JSON and deserialize it as Bookmark structure
-    let bookmark_folders: Result<model_json::model_json::BookmarkRootFolder, _> =
-        serde_json::from_reader(input_reader);
-    let bookmarks: Vec<model_json::model_json::BookmarkNodes> = match bookmark_folders {
-        Ok(bookmark_folders) => {
-            // recursively visit each child and return Some tuple if it is bookmark, else return None for containers and separators
-            fn traverse_children(
-                children: &Vec<model_json::model_json::BookmarkNodes>,
-            ) -> Vec<model_json::model_json::BookmarkNodes> {
-                let mut bookmarks: Vec<model_json::model_json::BookmarkNodes> = Vec::new();
-                for child in children {
-                    if child.is_bookmark() {
-                        bookmarks.push(child.clone());
-                    } else if let Some(children) = &child.children() {
-                        bookmarks.append(&mut traverse_children(children));
+    let bookmark_folders: Result<
+        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkRootFolder,
+        _,
+    > = serde_json::from_reader(input_reader);
+    let bookmarks: Vec<model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes> =
+        match bookmark_folders {
+            Ok(bookmark_folders) => {
+                // recursively visit each child and return Some tuple if it is bookmark, else return None for containers and separators
+                fn traverse_children(
+                    children: &Vec<
+                        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes,
+                    >,
+                ) -> Vec<model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes>
+                {
+                    let mut bookmarks: Vec<
+                        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes,
+                    > = Vec::new();
+                    for child in children {
+                        if child.is_bookmark() {
+                            bookmarks.push(child.clone());
+                        } else if let Some(children) = &child.children() {
+                            bookmarks.append(&mut traverse_children(children));
+                        }
                     }
+                    bookmarks
                 }
-                bookmarks
+                traverse_children(bookmark_folders.children())
             }
-            traverse_children(bookmark_folders.children())
-        }
-        Err(e) => {
-            println!("Error deserializing JSON: {}", e);
-            return;
-        }
-    };
+            Err(e) => {
+                println!("Error deserializing JSON: {}", e);
+                return;
+            }
+        };
 
     // now that we've got it as data-model, we will just travese down each child and print out the title, URI, and last modified date, sorted by last modified date
-    let mut bookmarks_sorted: Vec<model_json::model_json::BookmarkNodes> = bookmarks.clone();
-    bookmarks_sorted.sort_by(|a, b| a.last_modified().cmp(&b.last_modified()));
-    // CSV output, we're assuming that by here, only the "places" nodes are left, so we can just print them out in CSV format
-    // either to the stdout or to the output file stream
-    let mut csv_writer = csv::WriterBuilder::new()
-        .quote_style(csv::QuoteStyle::Always)   // just easier to just quote everything including numbers
-        .from_writer(output_writer);
+    let mut bookmarks_sorted: Vec<
+        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes,
+    > = bookmarks.clone();
+    //bookmarks_sorted.sort_by(|a, b| a.last_modified().cmp(&b.last_modified()));   // sort by date-column
+    bookmarks_sorted.sort_by(|a, b| a.uri().cmp(&b.uri())); // sort by URI
+                                                            // CSV output, we're assuming that by here, only the "places" nodes are left, so we can just print them out in CSV format
+                                                            // either to the stdout or to the output file stream
+                                                            //let mut csv_writer = csv::WriterBuilder::new()
+                                                            //    .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
+                                                            //    .from_writer(output_writer);
+
+    let mut mut_csv_writer = model_csv_manga::model_csv_manga::Utils::new(output_writer);
+
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
@@ -206,14 +225,7 @@ fn main() {
             (bookmark.last_modified() % 1_000_000) as u32,
         )
         .unwrap();
-        // output: "title","uri","chapter","last_modified","notes","tags"
-        let mut record = csv::StringRecord::new();
-        record.push_field(&bookmark.title());
-        record.push_field(&bookmark.uri());
-        record.push_field("0");
-        record.push_field(&last_modified.format("%Y-%m-%dT%H:%M:%S").to_string());
-        record.push_field("-");
-        record.push_field("#");
-        csv_writer.write_record(&record).unwrap();
+        mut_csv_writer.record(last_modified.timestamp_micros(), &bookmark.uri(), bookmark.title())
+            .unwrap();
     }
 }
