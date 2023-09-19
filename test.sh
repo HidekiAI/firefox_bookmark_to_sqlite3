@@ -1,6 +1,7 @@
 #!/bin/bash
 
 _PROJ=$(basename $(pwd))
+cargo build
 cargo test
 
 if ! [ -e /dev/shm/$_PROJ ]; then

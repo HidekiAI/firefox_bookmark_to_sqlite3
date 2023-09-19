@@ -5,7 +5,7 @@
 pub mod model_csv_manga {
     use csv::Writer;
     use serde::{Deserialize, Serialize};
-    use std::fmt::Debug;
+    use std::fmt::{self, Debug, Display};
     use std::io::Write;
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,17 +13,20 @@ pub mod model_csv_manga {
         #[serde(rename = "Title")]
         title: String,
 
-        #[serde(rename = "Romanized Title")]
+        #[serde(rename = "Romanized_Title")]
         romanized_title: String,
 
-        #[serde(rename = "URL with Chapters")]
+        #[serde(rename = "URL")]
+        url: String, // URL without the chapter (mainly for sorting purposes)
+
+        #[serde(rename = "URL_with_Chapters")]
         url_with_chapters: String,
 
         #[serde(rename = "Chapter")]
         chapter: String,
 
-        #[serde(rename = "Last Modified")]
-        last_modified: String,
+        #[serde(rename = "Last_Modified")]
+        last_modified_YYYYmmddTHHMMSS: String, // format is "%Y-%m-%dT%H:%M:%S"
 
         #[serde(rename = "Notes")]
         notes: String,
@@ -32,29 +35,34 @@ pub mod model_csv_manga {
         tags: String,
     }
 
-    //impl Default for Manga {
-    //    fn default() -> Self {
-    //        Manga {
-    //            title: String::from(""),
-    //            romanized_title: String::from(""),
-    //            url_with_chapters: String::from(""),
-    //            chapter: String::from(""),
-    //            last_modified: String::from(""),
-    //            notes: String::from(""),
-    //            tags: String::from(""),
-    //        }
-    //    }
-    //}
+    impl fmt::Display for Manga {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(
+                f,
+                //"Title: {}\nRomanized Title: {}\nURL: {}\nURL with Chapters: {}\nChapter: {}\nLast Modified: {}\nNotes: {}\nTags: {}",
+                "Title:{}; Romanized Title:{}; URL:{}; URL with Chapters:{}; Chapter:{}; Last Modified:{}; Notes:{}; Tags:{}",
+                self.title,
+                self.romanized_title,
+                self.url,
+                self.url_with_chapters,
+                self.chapter,
+                self.last_modified_YYYYmmddTHHMMSS,
+                self.notes,
+                self.tags
+            )
+        }
+    }
 
     impl Manga {
         pub fn new(title: String) -> Self {
             let romanized_title = Manga::romanized_url_with_chapters(&title);
             Manga {
                 title,
-                romanized_title,
+                romanized_title: Manga::fix_comma_in_string(romanized_title.as_str()),
+                url: String::from(""),
                 url_with_chapters: String::from(""),
                 chapter: String::from(""),
-                last_modified: String::from(""),
+                last_modified_YYYYmmddTHHMMSS: String::from(""),
                 notes: String::from(""),
                 tags: String::from(""),
             }
@@ -62,36 +70,90 @@ pub mod model_csv_manga {
 
         pub fn new_with_url(title: String, url_with_chapters: String) -> Self {
             let romanized_title = Manga::romanized_url_with_chapters(&title);
+            let (uri_stripped, chapter) = Manga::strip_chapter_from_url(url_with_chapters.clone());
+
             Manga {
                 title,
-                romanized_title,
+                romanized_title: Manga::fix_comma_in_string(romanized_title.as_str()),
+                url: uri_stripped.clone(),
                 url_with_chapters,
-                chapter: String::from(""),
-                last_modified: String::from(""),
+                chapter: chapter.clone(),
+                last_modified_YYYYmmddTHHMMSS: String::from(""),
                 notes: String::from(""),
                 tags: String::from(""),
             }
         } // new_with_url(title: String, url_with_chapters: String)
+        pub fn new_from_bookmark(
+            bookmark_last_modified_epoch_micros: i64,
+            bookmark_uri: &String,
+            bookmark_title: &String,
+        ) -> Self {
+            // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
+            let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
+                bookmark_last_modified_epoch_micros / 1_000_000,
+                (bookmark_last_modified_epoch_micros % 1_000_000) as u32,
+            )
+            .unwrap();
+            // output: "uri_stripped_for_sorting","title","uri","chapter","last_modified","notes","tags"
+            // extract chapter if link indicates so...
 
-        pub fn to_csv(&self) -> String {
+            let (uri_stripped, chapter) = Manga::strip_chapter_from_url(bookmark_uri.into());
+
+            Manga {
+                title: Manga::fix_comma_in_string(bookmark_title.clone().as_str()),
+                romanized_title: Manga::romanized_url_with_chapters(&bookmark_title.clone()),
+                url: uri_stripped.clone(),
+                url_with_chapters: bookmark_uri.clone(),
+                chapter,
+                last_modified_YYYYmmddTHHMMSS: last_modified
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string(),
+                notes: String::from(""),
+                tags: String::from("#"),
+            }
+        }
+
+        // serialize to CSV string
+        pub fn to_csv(&self, for_sorting: bool) -> String {
+            // Q: is there way to do this without using csv::WriterBuilder?
+            let record = csv::StringRecord::new();
+
             let mut wtr = csv::WriterBuilder::new()
                 .quote_style(csv::QuoteStyle::Always) // quote everything
                 .has_headers(false)
                 .from_writer(vec![]);
-            wtr.serialize((
-                &self.title,
-                &self.romanized_title,
-                &self.url_with_chapters,
-                &self.chapter,
-                &self.last_modified,
-                &self.notes,
-                &self.tags,
-            ))
-            .unwrap();
+            if for_sorting {
+                // NOTE: this serializer does NOT render URL without chapter
+                wtr.serialize((
+                    &self.url, // it's first-column so it' can be easily sorted
+                    &self.title,
+                    &self.romanized_title,
+                    &self.url_with_chapters,
+                    &self.chapter,
+                    &self.last_modified_YYYYmmddTHHMMSS,
+                    &self.notes,
+                    &self.tags,
+                ))
+                .unwrap();
+            } else {
+                wtr.serialize((
+                    &self.title,
+                    &self.romanized_title,
+                    &self.url_with_chapters,
+                    &self.chapter,
+                    &self.last_modified_YYYYmmddTHHMMSS,
+                    &self.notes,
+                    &self.tags,
+                ))
+                .unwrap();
+            }
             String::from_utf8(wtr.into_inner().unwrap()).unwrap()
         }
-
+        // desrialize from CSV string
         pub fn from_csv(csv: &str) -> Result<Manga, csv::Error> {
+            // Q: Is there way to do this without using csv::ReaderBuilder?
+            let record = csv::StringRecord::new();
+
             let mut rdr = csv::ReaderBuilder::new()
                 .has_headers(false)
                 .from_reader(csv.as_bytes());
@@ -100,9 +162,10 @@ pub mod model_csv_manga {
             Ok(Manga {
                 title: record.title,
                 romanized_title: record.romanized_title,
+                url: record.url,
                 url_with_chapters: record.url_with_chapters,
                 chapter: record.chapter,
-                last_modified: record.last_modified,
+                last_modified_YYYYmmddTHHMMSS: record.last_modified_YYYYmmddTHHMMSS,
                 notes: record.notes,
                 tags: record.tags,
             })
@@ -121,7 +184,7 @@ pub mod model_csv_manga {
             &self.chapter
         }
         pub fn last_modified(&self) -> &String {
-            &self.last_modified
+            &self.last_modified_YYYYmmddTHHMMSS
         }
         pub fn notes(&self) -> &String {
             &self.notes
@@ -129,10 +192,34 @@ pub mod model_csv_manga {
         pub fn tags(&self) -> &String {
             &self.tags
         }
+
+        fn fix_comma_in_string(s: &str) -> String {
+            Utils::fix_comma_in_string(s)
+        }
         // only exposing this function so that use-depencies of kakasi will be limited to this module only
         // but mainly, also want to preserve at least the UTF8 comma ("、") in the title
-        pub fn romanized_url_with_chapters(title: &String) -> String {
-            kakasi::convert(title).romaji.replace(",", "、")
+        fn romanized_url_with_chapters(title: &String) -> String {
+            Manga::fix_comma_in_string(kakasi::convert(title).romaji.as_str())
+        }
+
+        pub fn get_last_modified(&self) -> i64 {
+            let timestampe_epoch_micros = chrono::NaiveDateTime::parse_from_str(
+                &self.last_modified_YYYYmmddTHHMMSS,
+                "%Y-%m-%dT%H:%M:%S",
+            )
+            .unwrap()
+            .timestamp_micros();
+
+            // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
+            chrono::NaiveDateTime::from_timestamp_opt(
+                timestampe_epoch_micros / 1_000_000,
+                (timestampe_epoch_micros % 1_000_000) as u32,
+            )
+            .unwrap()
+            .timestamp_micros()
+        }
+        fn strip_chapter_from_url(url_with_chapters: String) -> (String, String) {
+            Utils::strip_chapter_from_url(&url_with_chapters)
         }
     }
 
@@ -158,22 +245,17 @@ pub mod model_csv_manga {
             }
         }
 
-        pub fn record(
-            &mut self,
-            bookmark_last_modified_epoch_micros: i64,
-            bookmark_uri: &String,
-            bookmark_title: &String,
-        ) -> Result<(), csv::Error> {
-            // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
-            let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
-                bookmark_last_modified_epoch_micros / 1_000_000,
-                (bookmark_last_modified_epoch_micros % 1_000_000) as u32,
-            )
-            .unwrap();
-            // output: "uri_stripped_for_sorting","title","uri","chapter","last_modified","notes","tags"
-            // extract chapter if link indicates so...
+        pub fn fix_comma_in_string(s: &str) -> String {
+            // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
+            // so, we need to replace all commas with something else, such as "、"
+            s.replace(",", "、")
+        }
+
+        pub fn strip_chapter_from_url(
+            url_with_chapters: &String,
+        ) -> (String /*url_stripped*/, String /*chapter*/) {
             let target_string = "chapter";
-            let chapter = match bookmark_uri
+            let chapter = match url_with_chapters
                 .to_lowercase()
                 .contains(&target_string.to_lowercase())
             {
@@ -182,7 +264,7 @@ pub mod model_csv_manga {
                     // get substring past the string "chapter" from the URI
                     // i.e. "http://mydomain.tld/title-chapter-10", "http://mydomain.tld/title-chapter-10-1", "http://mydomain.tld/title-chapter-10/", "http://mydomain.tld/title-chapter-10-1/"
                     // we want to extract as "10", "10.1" - note that trailing "/" needs to be removed and "-" needs to be replaced with "."
-                    let mut chapter_number = bookmark_uri.to_lowercase();
+                    let mut chapter_number = url_with_chapters.to_lowercase();
                     chapter_number = chapter_number
                         .split_off(chapter_number.find(&target_string.to_lowercase()).unwrap());
                     chapter_number = chapter_number
@@ -197,7 +279,7 @@ pub mod model_csv_manga {
                     chapter_number.replace('-', ".")
                 }
             };
-            let mut uri_stripped = bookmark_uri.clone();
+            let mut uri_stripped = url_with_chapters.clone();
             if uri_stripped.to_lowercase().contains(target_string) {
                 // remove trailing "/" if any first before popping other stuffs
                 let has_closing_slash = uri_stripped.ends_with('/');
@@ -221,16 +303,82 @@ pub mod model_csv_manga {
                     uri_stripped.push('/');
                 }
             }
+            (uri_stripped, chapter)
+        }
 
+        // read the CSV file (either as a file stream or stdin stream) and convert to Vec<Manga> (uses Manga::from_csv() methods for each rows read)
+        pub fn read_csv(input_reader: Box<dyn std::io::Read>) -> Vec<Manga> {
+            let mut rdr = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .from_reader(input_reader);
+
+            let mut mangas: Vec<Manga> = Vec::new();
+            //mangas.extend(rdr.deserialize::<Manga>());
+            for result in rdr.deserialize() {
+                let record: Manga = result.unwrap();
+                mangas.push(Manga {
+                    title: record.title,
+                    romanized_title: record.romanized_title,
+                    url: record.url,
+                    url_with_chapters: record.url_with_chapters,
+                    chapter: record.chapter,
+                    last_modified_YYYYmmddTHHMMSS: record.last_modified_YYYYmmddTHHMMSS,
+                    notes: record.notes,
+                    tags: record.tags,
+                });
+            }
+            mangas
+        }
+
+        pub fn write_csv(&mut self, mangas: &Vec<Manga>) -> Result<(), csv::Error> {
+            for manga in mangas {
+                let mut record = csv::StringRecord::new();
+                record.push_field(&manga.title);
+                record.push_field(&manga.romanized_title);
+                record.push_field(&manga.url_with_chapters);
+                record.push_field(&manga.chapter);
+                record.push_field(&manga.last_modified_YYYYmmddTHHMMSS);
+                record.push_field(&manga.notes);
+                record.push_field(&manga.tags);
+                self.csv_writer.write_record(&record)?;
+            }
+            Ok(())
+        }
+
+        pub fn write_csv_header(&mut self) -> Result<(), csv::Error> {
             let mut record = csv::StringRecord::new();
-            record.push_field(&uri_stripped);
-            record.push_field(&bookmark_title);
-            record.push_field(&bookmark_uri);
-            record.push_field(&chapter);
-            record.push_field(&last_modified.format("%Y-%m-%dT%H:%M:%S").to_string());
-            record.push_field("-");
-            record.push_field("#");
+            record.push_field("Title");
+            record.push_field("Romanized_Title");
+            record.push_field("URL_with_Chapters");
+            record.push_field("Chapter");
+            record.push_field("Last_Modified");
+            record.push_field("Notes");
+            record.push_field("Tags");
             self.csv_writer.write_record(&record)
+        }
+
+        pub fn record(
+            &mut self,
+            bookmark_last_modified_epoch_micros: i64,
+            bookmark_uri: &String,
+            bookmark_title: &String,
+        ) -> Manga {
+            let m = Manga::new_from_bookmark(
+                bookmark_last_modified_epoch_micros,
+                bookmark_uri,
+                bookmark_title,
+            );
+            let mut record = csv::StringRecord::new();
+            record.push_field(&m.url);
+            record.push_field(&m.title);
+            record.push_field(&m.url_with_chapters);
+            record.push_field(&m.chapter);
+            record.push_field(&m.last_modified_YYYYmmddTHHMMSS);
+            record.push_field(&m.notes);
+            record.push_field(&m.tags);
+            // write it
+            self.csv_writer.write_record(&record).unwrap();
+            m
         }
     }
 
@@ -243,9 +391,10 @@ pub mod model_csv_manga {
             let manga = Manga {
                 title: String::from("One Piece"),
                 romanized_title: String::from("Wan Pīsu"),
+                url: String::from("https://example.com/manga/one-piece/"),
                 url_with_chapters: String::from("https://example.com/manga/one-piece/"),
                 chapter: String::from("1000"),
-                last_modified: String::from("2021-07-22T12:34:56"),
+                last_modified_YYYYmmddTHHMMSS: String::from("2021-07-22T12:34:56"),
                 notes: String::from(""),
                 tags: String::from("action; adventure; comedy; drama; fantasy; shounen"), // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
             };
@@ -262,9 +411,10 @@ pub mod model_csv_manga {
             let manga = Manga {
                 title: k_manga_title.clone(),
                 romanized_title: Manga::romanized_url_with_chapters(&k_manga_title.clone()),
+                url: String::from("https://example.com/manga/one-piece/"),
                 url_with_chapters: String::from("https://example.com/manga/gate/"),
                 chapter: String::from("1000"),
-                last_modified: String::from("2021-07-22T12:34:56"),
+                last_modified_YYYYmmddTHHMMSS: String::from("2021-07-22T12:34:56"),
                 notes: String::from(""),
                 tags: String::from("action; adventure; comedy; drama; fantasy; shounen"), // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
             };
@@ -277,23 +427,25 @@ pub mod model_csv_manga {
             let manga = Manga {
                 title: String::from("One Piece"),
                 romanized_title: Manga::romanized_url_with_chapters(&String::from("One Piece")),
+                url: String::from("https://example.com/manga/one-piece/"),
                 url_with_chapters: String::from("https://example.com/manga/one-piece/"),
                 chapter: String::from("1000"),
-                last_modified: String::from("2021-07-22T12:34:56"),
+                last_modified_YYYYmmddTHHMMSS: String::from("2021-07-22T12:34:56"),
                 notes: String::from(""),
                 tags: String::from("action; adventure; comedy; drama; fantasy; shounen"), // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
             };
-            let csv = manga.to_csv();
+            let csv = manga.to_csv(true);
             assert_eq!(
                 csv,
-                "\"One Piece\",\"One Piece\",\"https://example.com/manga/one-piece/\",\"1000\",\"2021-07-22T12:34:56\",\"\",\"action; adventure; comedy; drama; fantasy; shounen\"\n"
+                // note that there are no sppace between the fields (comma)
+                "\"https://example.com/manga/one-piece/\",\"One Piece\",\"One Piece\",\"https://example.com/manga/one-piece/\",\"1000\",\"2021-07-22T12:34:56\",\"\",\"action; adventure; comedy; drama; fantasy; shounen\"\n"
             );
         }
 
         // test deserialization from CSV
         #[test]
         fn test_from_csv() {
-            let csv = "\"One Piece\",\"One Piece\",\"https://example.com/manga/one-piece/\",\"1000\",\"2021-07-22T12:34:56\",\"\",\"action; adventure; comedy; drama; fantasy; shounen\"\n";
+            let csv = "\"One Piece\",\"One Piece\",\"https://example.com/manga/one-piece/\",\"https://example.com/manga/one-piece/\",\"1000\",\"2021-07-22T12:34:56\",\"\",\"action; adventure; comedy; drama; fantasy; shounen\"\n";
             let manga = Manga::from_csv(csv).unwrap();
             assert_eq!(manga.title(), "One Piece");
             assert_eq!(

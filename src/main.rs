@@ -9,17 +9,29 @@ mod json_to_csv {
         io::{self, BufRead, BufReader, BufWriter, Write},
     };
 
-    use crate::model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
-        BookmarkNodes, BookmarkRootFolder,
+    use crate::{
+        model_csv_manga,
+        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
+            BookmarkNodes, BookmarkRootFolder,
+        },
     };
 
     pub fn parse_args(
         args: Vec<String>,
-    ) -> Result<(Box<dyn BufRead + 'static>, Box<dyn Write + 'static>), String> {
+    ) -> Result<
+        (
+            Box<dyn BufRead + 'static>,
+            Box<dyn Write + 'static>,
+            Option<Vec<model_csv_manga::model_csv_manga::Manga>>,
+        ),
+        String,
+    > {
         let mut input_file = false;
         let mut output_file = false;
+        let mut input_csv_file = false;
         let mut input = String::new();
         let mut output = String::new();
+        let mut input_csv = String::new();
         for i in 0..args.len() {
             if args[i] == "-i" {
                 input_file = true;
@@ -28,6 +40,31 @@ mod json_to_csv {
             if args[i] == "-o" {
                 output_file = true;
                 output = args[i + 1].clone();
+            }
+            if args[i] == "-c" {
+                input_csv_file = true;
+                input_csv = args[i + 1].clone();
+            }
+        }
+
+        println!("\nInput_file: {} '{}'", input_file, input);
+        println!("Output_file: {} '{}'", output_file, output);
+        println!("Input_csv_file: {} '{}'", input_csv_file, input_csv);
+
+        // append/read (deserialize) from input CSV file (if it exists)
+        let mut last_csv_file: Option<Vec<model_csv_manga::model_csv_manga::Manga>> = None;
+        if (input_csv_file) {
+            match File::open(&input_csv) {
+                Ok(file) => {
+                    println!("Input CSV file: {}", input_csv);
+                    let input_reader = Box::new(BufReader::new(file)); // NOTE: file is NOT std::io::stdin(), or can  it be?
+                    let mangas = model_csv_manga::model_csv_manga::Utils::read_csv(input_reader);
+                    last_csv_file = Some(mangas);
+                }
+                Err(e) => {
+                    // just log that we cannot find it, but it's no big deal (keep last_csv_file=None)
+                    println!("Error opening CSV file '{}': {}", input_csv, e)
+                }
             }
         }
 
@@ -41,7 +78,7 @@ mod json_to_csv {
                             Ok(file) => {
                                 println!("Output file: {}", output);
                                 let output_writer = Box::new(BufWriter::new(file));
-                                return Ok((input_reader, output_writer));
+                                return Ok((input_reader, output_writer, last_csv_file));
                             }
                             Err(e) => {
                                 return Err(format!(
@@ -53,7 +90,7 @@ mod json_to_csv {
                     } else {
                         println!("Output file: stdout");
                         let output_writer = Box::new(BufWriter::new(io::stdout()));
-                        return Ok((input_reader, output_writer));
+                        return Ok((input_reader, output_writer, last_csv_file));
                     }
                 }
                 Err(e) => {
@@ -73,7 +110,7 @@ mod json_to_csv {
                     Ok(file) => {
                         println!("Output file: {}", output);
                         let output_writer = Box::new(BufWriter::new(file));
-                        return Ok((input_reader, output_writer));
+                        return Ok((input_reader, output_writer, last_csv_file));
                     }
                     Err(e) => {
                         return Err(format!("Error creating output file: {}", e));
@@ -82,7 +119,7 @@ mod json_to_csv {
             } else {
                 println!("Output file: stdout");
                 let output_writer = Box::new(BufWriter::new(io::stdout()));
-                return Ok((input_reader, output_writer));
+                return Ok((input_reader, output_writer, last_csv_file));
             }
         }
     }
@@ -95,9 +132,11 @@ mod json_to_csv {
             String::from("tests/input.json"),
             String::from("-o"),
             String::from("/dev/shm/output.csv"),
+            String::from("-c"),
+            String::from("/dev/shm/current_list.csv"),
         ];
         match parse_args(args) {
-            Ok((_input, mut output)) => {
+            Ok((_input, mut output, _possible_mangas)) => {
                 // clean up and close
                 output.flush().unwrap();
             }
@@ -109,7 +148,7 @@ mod json_to_csv {
         // read test JSON files and attempt to deserialize it
         let args = vec![String::from("-i"), String::from("tests/input.json")];
         match parse_args(args) {
-            Ok((input, mut output)) => {
+            Ok((input, mut output, _possible_mangas)) => {
                 // deserialize - from_reader() method needs to access io::Read::bytes() method
 
                 //// For now, read the whol buffer into memory and pass that on
@@ -161,8 +200,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // read in JSON either from stdin or file
-    let (input_reader, output_writer) = match json_to_csv::parse_args(args) {
-        Ok((input_reader, output_writer)) => (input_reader, output_writer),
+    let (input_reader, output_writer, possible_mangas) = match json_to_csv::parse_args(args) {
+        Ok((input_reader, output_writer, possible_mangas)) => {
+            (input_reader, output_writer, possible_mangas)
+        }
         Err(e) => {
             println!("{}", e);
             return;
@@ -210,14 +251,21 @@ fn main() {
     > = bookmarks.clone();
     //bookmarks_sorted.sort_by(|a, b| a.last_modified().cmp(&b.last_modified()));   // sort by date-column
     bookmarks_sorted.sort_by(|a, b| a.uri().cmp(&b.uri())); // sort by URI
-                                                            // CSV output, we're assuming that by here, only the "places" nodes are left, so we can just print them out in CSV format
-                                                            // either to the stdout or to the output file stream
-                                                            //let mut csv_writer = csv::WriterBuilder::new()
-                                                            //    .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
-                                                            //    .from_writer(output_writer);
 
+    // CSV output, we're assuming that by here, only the "places" nodes are left, so we can just print them out in CSV format
+    // either to the stdout or to the output file stream
+    //let mut csv_writer = csv::WriterBuilder::new()
+    //    .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
+    //    .from_writer(output_writer);
     let mut mut_csv_writer = model_csv_manga::model_csv_manga::Utils::new(output_writer);
-
+    let mut mangas = possible_mangas.unwrap_or(Vec::new());
+    //#[cfg(debug_assertions)]
+    //{
+    //    println!("mangas.len(): {}", mangas.len());
+    //    for manga in &mangas {
+    //        println!("{}", manga);
+    //    }
+    //}
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
@@ -225,7 +273,16 @@ fn main() {
             (bookmark.last_modified() % 1_000_000) as u32,
         )
         .unwrap();
-        mut_csv_writer.record(last_modified.timestamp_micros(), &bookmark.uri(), bookmark.title())
-            .unwrap();
+        let m = mut_csv_writer.record(
+            last_modified.timestamp_micros(),
+            &bookmark.uri(),
+            bookmark.title(),
+        );
+        //#[cfg(debug_assertions)]
+        //{
+        //    print first before pushing so the ownership is not moved
+        //    println!("{}", m);
+        //}
+        mangas.push(m);
     }
 }
