@@ -22,7 +22,7 @@ mod json_to_csv {
         (
             Box<dyn BufRead + 'static>,
             Box<dyn Write + 'static>,
-            Option<Vec<model_csv_manga::model_csv_manga::Manga>>,
+            Option<Vec<model_csv_manga::model_csv_manga::CsvMangaModel>>,
         ),
         String,
     > {
@@ -52,7 +52,7 @@ mod json_to_csv {
         println!("Input_csv_file: {} '{}'", input_csv_file, input_csv);
 
         // append/read (deserialize) from input CSV file (if it exists)
-        let mut last_csv_file: Option<Vec<model_csv_manga::model_csv_manga::Manga>> = None;
+        let mut last_csv_file: Option<Vec<model_csv_manga::model_csv_manga::CsvMangaModel>> = None;
         if (input_csv_file) {
             match File::open(&input_csv) {
                 Ok(file) => {
@@ -259,13 +259,6 @@ fn main() {
     //    .from_writer(output_writer);
     let mut mut_csv_writer = model_csv_manga::model_csv_manga::Utils::new(output_writer);
     let mut mangas = possible_mangas.unwrap_or(Vec::new());
-    //#[cfg(debug_assertions)]
-    //{
-    //    println!("mangas.len(): {}", mangas.len());
-    //    for manga in &mangas {
-    //        println!("{}", manga);
-    //    }
-    //}
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
@@ -273,16 +266,26 @@ fn main() {
             (bookmark.last_modified() % 1_000_000) as u32,
         )
         .unwrap();
-        let m = mut_csv_writer.record(
+        //let m = mut_csv_writer.record(
+        //    last_modified.timestamp_micros(),
+        //    &bookmark.uri(),
+        //    bookmark.title(),
+        //);
+        let m = model_csv_manga::model_csv_manga::CsvMangaModel::new_from_bookmark(
             last_modified.timestamp_micros(),
             &bookmark.uri(),
             bookmark.title(),
         );
-        //#[cfg(debug_assertions)]
-        //{
-        //    print first before pushing so the ownership is not moved
-        //    println!("{}", m);
-        //}
         mangas.push(m);
+    }
+
+    // now that new and old are merged, sort by last_modified and print out the CSV
+    mangas.sort_by(|a, b| a.url().cmp(&b.url()));
+    for manga in mangas {
+        #[cfg(debug_assertions)]
+        {
+            //println!("{}", manga);
+        }
+        mut_csv_writer.record(&manga.clone());
     }
 }
