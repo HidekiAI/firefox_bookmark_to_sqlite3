@@ -8,16 +8,34 @@ pub mod model_csv_manga {
     use std::fmt::{self, Debug, Display};
     use std::io::Write;
 
+    // Custom deserialization function for Option<String>
+    fn fn_deserialize_option_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s: Result<String, _> = Deserialize::deserialize(deserializer);
+        Ok(s.ok())
+    }
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CsvMangaModel {
         title: String,
-        romanized_title: Option<String>,    // for V2
-        url: Option<String>,            // for V2
         url_with_chapters: String,
         chapter: String,
         last_modified_YYYYmmddTHHMMSS: String,
         notes: String,
         tags: String,
+
+        // Note: all new varaibles have to be Option type AND must be appended to the end of the struct
+        // All variables that are Option type should get serialized to Some("") so that writer can make
+        // sure to pack it (i.e. "a",,,"d",,"f") - Option type is only for the sake of missing data
+        // on older version of the CSV
+        #[serde(default)]   // quite critical that you have this for any/almost-all serde elements that are Option type
+        #[serde(deserialize_with = "fn_deserialize_option_string")] // this is the custom deserializer for Option<String>
+        romanized_title: Option<String>, // for V2
+
+        #[serde(default)]   // quite critical that you have this for any/almost-all serde elements that are Option type
+        #[serde(deserialize_with = "fn_deserialize_option_string")] // this is the custom deserializer for Option<String>
+        url: Option<String>, // for V2
     }
 
     impl fmt::Display for CsvMangaModel {
@@ -39,8 +57,7 @@ pub mod model_csv_manga {
             self.last_modified_YYYYmmddTHHMMSS,
             self.notes,
             self.tags,
-        )
-        }
+        ) }
     }
 
     impl CsvMangaModel {
@@ -113,10 +130,11 @@ pub mod model_csv_manga {
             let (uri_stripped, chapter) =
                 CsvMangaModel::strip_chapter_from_url(bookmark_uri.into());
 
-
             CsvMangaModel {
                 title: CsvMangaModel::fix_comma_in_string(bookmark_title.clone().as_str()),
-                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters( &bookmark_title.clone() ) ),
+                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters(
+                    &bookmark_title.clone(),
+                )),
                 url: Some(uri_stripped.clone()),
                 url_with_chapters: bookmark_uri.clone(),
                 chapter,
@@ -140,25 +158,41 @@ pub mod model_csv_manga {
             if for_sorting {
                 // NOTE: this serializer does NOT render URL without chapter
                 wtr.serialize((
-                    &self.url, // it's first-column so it' can be easily sorted
+                    (match &self.url {
+                        // special case where all columns will shift left by 1
+                        Some(s) => s,
+                        None => &self.url_with_chapters,
+                    }),
                     &self.title,
-                    &self.romanized_title,
                     &self.url_with_chapters,
                     &self.chapter,
                     &self.last_modified_YYYYmmddTHHMMSS,
                     &self.notes,
                     &self.tags,
+                    // v2
+                    (match &self.romanized_title {
+                        Some(s) => s,
+                        None => &self.title,
+                    }),
                 ))
                 .unwrap();
             } else {
                 wtr.serialize((
                     &self.title,
-                    &self.romanized_title,
                     &self.url_with_chapters,
                     &self.chapter,
                     &self.last_modified_YYYYmmddTHHMMSS,
                     &self.notes,
                     &self.tags,
+                    // v2
+                    (match &self.url {
+                        Some(s) => s,
+                        None => &self.url_with_chapters,
+                    }),
+                    (match &self.romanized_title {
+                        Some(s) => s,
+                        None => &self.title,
+                    }),
                 ))
                 .unwrap();
             }
@@ -174,33 +208,37 @@ pub mod model_csv_manga {
                 .from_reader(csv.as_bytes());
 
             let record: CsvMangaModel = rdr.deserialize().next().unwrap()?;
-            Ok(
-                CsvMangaModel {
+            Ok(CsvMangaModel {
                 title: record.title,
-                romanized_title: record.romanized_title,
-                url: record.url,
+                url: (match record.url {
+                    Some(s) => Some(s),
+                    None => Some(String::from("")),
+                }),
+                romanized_title: (match record.romanized_title {
+                    Some(s) => Some(s),
+                    None => Some(String::from("")),
+                }),
                 url_with_chapters: record.url_with_chapters,
                 chapter: record.chapter,
                 last_modified_YYYYmmddTHHMMSS: record.last_modified_YYYYmmddTHHMMSS,
                 notes: record.notes,
-                tags: record.tags, 
-            }
-        )
+                tags: record.tags,
+            })
         }
 
         pub fn title(&self) -> &String {
             &self.title
         }
-        pub fn romanized_title(&self) -> &String {
+        pub fn romanized_title(&self) -> String {
             match self.romanized_title {
-                Some(ref s) => s,
-                None => &self.title,
+                Some(ref s) => s.clone(),
+                None => String::from(""),
             }
         }
-        pub fn url(&self) -> &String {
+        pub fn url(&self) -> String {
             match self.url {
-                Some(ref s) => s,
-                None => &self.url_with_chapters,
+                Some(ref s) => s.clone(),
+                None => String::from(""),
             }
         }
         pub fn url_with_chapters(&self) -> &String {
@@ -432,11 +470,10 @@ pub mod model_csv_manga {
                         }
 
                         // push a copy
-                        mangas.push(
-                            CsvMangaModel::new_with_url(
-                                record.title,
-                                record.url_with_chapters,
-                            ));
+                        mangas.push(CsvMangaModel::new_with_url(
+                            record.title,
+                            record.url_with_chapters,
+                        ));
                     }
                     Err(e) => {
                         eprintln!("Error: {}", e);
@@ -452,11 +489,11 @@ pub mod model_csv_manga {
                 record.push_field(&manga.title);
                 record.push_field(match &manga.romanized_title {
                     Some(s) => s,
-                    None => &manga.title,
+                    None => "",
                 });
                 record.push_field(match &manga.url {
                     Some(s) => s,
-                    None => &manga.url_with_chapters,
+                    None => "",
                 });
                 record.push_field(&manga.url_with_chapters);
                 record.push_field(&manga.chapter);
@@ -496,11 +533,11 @@ pub mod model_csv_manga {
             let mut record = csv::StringRecord::new();
             record.push_field(match &m.url {
                 Some(s) => s,
-                None => &m.url_with_chapters,
+                None => "",
             });
             record.push_field(match &m.romanized_title {
                 Some(s) => s,
-                None => &m.title,
+                None => "",
             });
             record.push_field(&m.title);
             record.push_field(&m.url_with_chapters);
@@ -516,11 +553,11 @@ pub mod model_csv_manga {
             let mut record = csv::StringRecord::new();
             record.push_field(match &m.url {
                 Some(s) => s,
-                None => &m.url_with_chapters,
+                None => "",
             });
             record.push_field(match &m.romanized_title {
                 Some(s) => s,
-                None => &m.title,
+                None => "",
             });
             record.push_field(&m.title);
             record.push_field(&m.url_with_chapters);
@@ -561,7 +598,9 @@ pub mod model_csv_manga {
                 String::from("geeto ― jieitai kano chi nite、 kaku tatakae ri");
             let manga = CsvMangaModel {
                 title: k_manga_title.clone(),
-                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters(&k_manga_title.clone())),
+                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters(
+                    &k_manga_title.clone(),
+                )),
                 url: Some(String::from("https://example.com/manga/one-piece/")),
                 url_with_chapters: String::from("https://example.com/manga/gate/"),
                 chapter: String::from("1000"),
@@ -569,7 +608,7 @@ pub mod model_csv_manga {
                 notes: String::from(""),
                 tags: String::from("action; adventure; comedy; drama; fantasy; shounen"), // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
             };
-            assert_eq!(manga.romanized_title(), &k_expected_romanized_title);
+            assert_eq!(manga.romanized_title(), k_expected_romanized_title);
         }
 
         // test serialization to CSV
@@ -577,7 +616,9 @@ pub mod model_csv_manga {
         fn test_to_csv() {
             let manga = CsvMangaModel {
                 title: String::from("One Piece"),
-                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters(&String::from( "One Piece"))),
+                romanized_title: Some(CsvMangaModel::romanized_url_with_chapters(&String::from(
+                    "One Piece",
+                ))),
                 url: Some(String::from("https://example.com/manga/one-piece/")),
                 url_with_chapters: String::from("https://example.com/manga/one-piece/"),
                 chapter: String::from("1000"),
@@ -601,7 +642,7 @@ pub mod model_csv_manga {
             assert_eq!(manga.title(), "One Piece");
             assert_eq!(
                 manga.romanized_title(),
-                &CsvMangaModel::romanized_url_with_chapters(&String::from("One Piece"))
+                CsvMangaModel::romanized_url_with_chapters(&String::from("One Piece"))
             );
             assert_eq!(
                 manga.url_with_chapters(),
