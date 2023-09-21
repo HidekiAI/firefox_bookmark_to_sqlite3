@@ -1,3 +1,5 @@
+use model_csv_manga::model_csv_manga::CsvMangaModel;
+
 mod model_csv_manga;
 mod model_json_mozilla_bookmarks; // this is the same as `mod model_json; pub use model_json::*;`
 
@@ -53,7 +55,7 @@ mod json_to_csv {
 
         // append/read (deserialize) from input CSV file (if it exists)
         let mut last_csv_file: Option<Vec<model_csv_manga::model_csv_manga::CsvMangaModel>> = None;
-        if (input_csv_file) {
+        if input_csv_file {
             match File::open(&input_csv) {
                 Ok(file) => {
                     println!("Input CSV file: {}", input_csv);
@@ -258,7 +260,7 @@ fn main() {
     //    .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
     //    .from_writer(output_writer);
     let mut mut_csv_writer = model_csv_manga::model_csv_manga::Utils::new(output_writer);
-    let mut mangas = possible_mangas.unwrap_or(Vec::new());
+    let mut mangas_mut = possible_mangas.unwrap_or(Vec::new());
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let last_modified = chrono::NaiveDateTime::from_timestamp_opt(
@@ -276,16 +278,212 @@ fn main() {
             &bookmark.uri(),
             bookmark.title(),
         );
-        mangas.push(m);
+        mangas_mut.push(m);
     }
 
     // now that new and old are merged, sort by last_modified and print out the CSV
-    mangas.sort_by(|a, b| a.url().cmp(&b.url()));
-    for manga in mangas {
+    mangas_mut.sort_by(|a, b| a.url().cmp(&b.url()));
+
+    // lastly, want to split into 2 files, one that is sorted but unique URL in which
+    // if there are duplicates in which one isin JA_JP and another in ROMAJI for title,
+    // then we want to keep the JA_JP one and dump the ROMAJI one into the "duplicates" file
+    // in another case, if there are multiple rows (JA_JP and ROMAJI) for the same URL,
+    // then we want to keep the one with the latest last_modified date OR bigger chapter number
+    // and dump the other one into the "duplicates" file
+    // see also Linux tool 'uniq -c' (note that 'uniq' requires sorted input for it tests against
+    // ADJACENT lines, so we need to sort it first)
+
+    // easiest is to create map (dictionary) based on what will consider as "unique" key
+    // We'll create multiple maps, one for each key
+    let mut url_map: std::collections::HashMap<
+        String,
+        Vec<model_csv_manga::model_csv_manga::CsvMangaModel>,
+    > = std::collections::HashMap::new();
+    let mut romaji_title_map: std::collections::HashMap<
+        String,
+        Vec<model_csv_manga::model_csv_manga::CsvMangaModel>,
+    > = std::collections::HashMap::new();
+    for mut manga_mut in mangas_mut {
+        // if URL is empty st, then we'll use the title as the url_with_chapters as fallback
+        let key_url = manga_mut.url_mut().to_string();
+        if url_map.contains_key(&key_url) {
+            url_map.get_mut(&key_url).unwrap().push(manga_mut.clone());
+        } else {
+            url_map.insert(key_url, vec![manga_mut.clone()]);
+        }
+
+        let key_romaji_title = manga_mut.romanized_title_mut().to_string();
+        if romaji_title_map.contains_key(&key_romaji_title) {
+            romaji_title_map
+                .get_mut(&key_romaji_title)
+                .unwrap()
+                .push(manga_mut.clone());
+        } else {
+            romaji_title_map.insert(key_romaji_title, vec![manga_mut.clone()]);
+        }
+    }
+
+    // because maps are auto-sorted by key, there are no sort_by() method, we'll
+    // create a new map that has only one entry per key (can do vec, but it's nice to
+    // have a list presoted by keys)
+    let mut url_map_unique: std::collections::HashMap<
+        String,
+        model_csv_manga::model_csv_manga::CsvMangaModel,
+    > = std::collections::HashMap::new();
+    let mut romaji_title_map_unique: std::collections::HashMap<
+        String,
+        model_csv_manga::model_csv_manga::CsvMangaModel,
+    > = std::collections::HashMap::new();
+    for (key, mangas) in &url_map {
+        // if only one entry, then add to url_map_unique
+        if mangas.len() == 1 {
+            // since len==1, first() is the only element...
+            url_map_unique.insert(key.into(), mangas.first().unwrap().clone());
+        }
+    }
+    // remove all unique entries from url_map so that we're left with ones that have duplicates
+    for (key, _) in &url_map_unique {
+        url_map.remove(key);
+    }
+
+    // now that we have url_map that have dupes, we'll generate two maps
+    // do the same for romaji_title_map
+    for (key, mangas) in &romaji_title_map {
+        // if only one entry, then add to romaji_title_map_unique
+        if mangas.len() == 1 {
+            romaji_title_map_unique.insert(key.into(), mangas.first().unwrap().clone());
+        }
+    }
+    // remove unique entries from romaji_title_map
+    for (key, _) in &romaji_title_map_unique {
+        romaji_title_map.remove(key);
+    }
+
+    // now merge the two uniques into single merged_unique_map,
+    // rather than checking whther key already exists or not, we'll just
+    // insert it and let the HashMap overwrite the existing entry
+    // because of that characteristic nature, it's important that
+    // we'd iterate the more important map last
+    let mut merged_unique_map: std::collections::HashMap<
+        String,
+        model_csv_manga::model_csv_manga::CsvMangaModel,
+    > = std::collections::HashMap::new();
+    for (key, manga) in url_map_unique {
+        merged_unique_map.insert(key, manga);
+    }
+    for (key, manga) in romaji_title_map_unique {
+        merged_unique_map.insert(key, manga);
+    }
+
+    // let's double check one last time, to make sure if the merged_unique_map
+    // does not have a key in the url_map or romaji_title_map
+    for (key, _) in &url_map {
+        // if key exists in url_map, then it should not be in merged_unique_map
+        if merged_unique_map.contains_key(key) {
+            // remove it
+            merged_unique_map.remove(key);
+        }
+    }
+    for (key, _) in &romaji_title_map {
+        // if key exists in romaji_title_map, then it should not be in merged_unique_map
+        if merged_unique_map.contains_key(key) {
+            // remove it
+            merged_unique_map.remove(key);
+        }
+    }
+
+    // now we are absolutely sure that merged_unique_map has only unique entries
+    // and we can dump it to the output file
+    for (_, manga) in &merged_unique_map {
         #[cfg(debug_assertions)]
         {
             //println!("{}", manga);
         }
         mut_csv_writer.record(&manga.clone());
+    }
+
+    // add a MARKER to indicate that this is the end of the unique list and what are to follow are duplicates
+    let marker_manga =
+        CsvMangaModel::new_from_bookmark(0, &String::from("MARKER"), &String::from("MARKER"));
+    mut_csv_writer.record(&marker_manga);
+
+    // url_map and romaji_title_map are basically bookmarks that needs to be narrowed down to
+    // single URL but because it has same URL but differs by title, or same title but differs by URL
+    // (i.e. due to one URL is chapter-1 and the other is chapter-2)
+    let mut merged_duplicates_map: Vec<model_csv_manga::model_csv_manga::CsvMangaModel> =
+        Vec::new();
+    for (_, mangas) in &url_map {
+        let mut mangas_for_update = mangas.clone();
+        // Iterate through each elements in mangas for its romaji_title (key) of romaji_title_map add locate any
+        // elements that does not match the key and add/update it to the mangas list
+        for m in mangas.clone() {
+            // search if m.url() is found in the URL map...
+            if romaji_title_map.contains_key(m.url()) {
+                // found url as key, move all the elements here into mangas list
+                for m2 in romaji_title_map.get(m.url()).unwrap() {
+                    // make sure this CsvMangaModel isn't already in the list
+                    if !mangas_for_update.contains(m2) {
+                        // not found, add it to the url key
+                        mangas_for_update.push(m2.clone());
+                    }
+                }
+
+                // remove the key from romaji_title_map
+                romaji_title_map.remove(m.url()).unwrap();
+            }
+        }
+
+        // and then add it as merged list
+        merged_duplicates_map.append(&mut mangas_for_update);
+    }
+    // now append (to merged_duplicates_map) any remaining elements in romaji_title_map
+    for (_, mangas) in romaji_title_map {
+        let mut mangas_for_update = mangas.clone();
+        // Iterate through each elements in mangas for its url (key) of url_map add locate any
+        // elements that does not match the key and add/update it to the mangas list
+        for m in mangas.clone() {
+            // search if m.romanized_title() is found in the URL map...
+            // and if so, grabe it, and remove it from url_map
+            if url_map.contains_key(m.romanized_title()) {
+                // found url as key, move all the elements here into mangas list
+                for m2 in url_map.get(m.romanized_title()).unwrap() {
+                    // make sure this CsvMangaModel isn't already in the list
+                    if !mangas_for_update.contains(m2) {
+                        mangas_for_update.push(m2.clone());
+                    }
+                }
+
+                // remove the key from url_map
+                // probably not needed, but just in case this block is moved/reordered...
+                url_map.remove(m.romanized_title()).unwrap();
+            }
+        }
+
+        // and then add it as merged list
+        merged_duplicates_map.append(&mut mangas_for_update);
+    }
+
+    // final sorting by URL
+    merged_duplicates_map.sort_by(|a, b| a.url().cmp(&b.url()));
+
+    // now that we've merged the url_map and romaji_title_map, we'll just dump it to the output file
+    for manga in merged_duplicates_map {
+        #[cfg(debug_assertions)]
+        {
+            //println!("{}", manga);
+        }
+        mut_csv_writer.record(&manga.clone());
+    }
+
+    // just in case, let's also dump url_map in case it has something in it still (it should be presorted by key:URL)
+    // so it'll be blocks of duplicates with same URL
+    for (_, mangas) in url_map {
+        for manga in mangas {
+            #[cfg(debug_assertions)]
+            {
+                //println!("{}", manga);
+            }
+            mut_csv_writer.record(&manga.clone());
+        }
     }
 }

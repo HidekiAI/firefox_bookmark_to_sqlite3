@@ -21,7 +21,7 @@ pub mod model_json_mozilla_bookmarks {
         date_added: i64,
 
         #[serde(rename = "lastModified")]
-        last_modified: i64,
+        last_modified: i64, // probably can be Option<i64>
 
         #[serde(rename = "id")]
         id: i64,
@@ -40,6 +40,31 @@ pub mod model_json_mozilla_bookmarks {
     }
 
     impl BookmarkRootFolder {
+        pub fn new(
+            guid: String,
+            title: String,
+            index: i64,
+            date_added: i64,
+            last_modified: i64,
+            id: i64,
+            type_code: i64,
+            bookmark_type: Type,
+            root: String,
+            children: Vec<BookmarkNodes>, // transfer ownership
+        ) -> BookmarkRootFolder {
+            BookmarkRootFolder {
+                guid,
+                title,
+                index,
+                date_added,
+                last_modified,
+                id,
+                type_code,
+                bookmark_type,
+                root,
+                children,
+            }
+        }
         pub fn children(&self) -> &Vec<BookmarkNodes> {
             &self.children
         }
@@ -82,6 +107,33 @@ pub mod model_json_mozilla_bookmarks {
     }
 
     impl BookmarkNodes {
+        pub fn new(
+            guid: String,
+            title: String,
+            index: i64,
+            date_added: i64,
+            last_modified: i64,
+            id: i64,
+            type_code: i64,
+            child_type: Type,
+            root: Option<String>,
+            children: Option<Vec<BookmarkNodes>>, // transfer ownership
+            uri: Option<String>,
+        ) -> BookmarkNodes {
+            BookmarkNodes {
+                guid,
+                title,
+                index,
+                date_added,
+                last_modified,
+                id,
+                type_code,
+                child_type,
+                root,
+                children,
+                uri,
+            }
+        }
         pub fn is_bookmark(&self) -> bool {
             self.child_type == Type::TextXMozPlace
         }
@@ -122,25 +174,99 @@ pub mod model_json_mozilla_bookmarks {
         TextXMozPlaceSeparator,
     }
 
-    #[test]
-    fn test() {
-        let json_data = r#"
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde_json::json;
+        #[test]
+        fn test_serialize_firefox_bookmark() {
+            let json_data = r#"
 { "guid": "root________", "title": "", "index": 0, "dateAdded": 1687548918712000, "lastModified": 1689519935422000, "id": 1, "typeCode": 2, "type": "text/x-moz-place-container", "root": "placesRoot", "children": [ { "guid": "menu________", "title": "menu", "index": 0, "dateAdded": 1687548918712000, "lastModified": 1688395173395000, "id": 2, "typeCode": 2, "type": "text/x-moz-place-container", "root": "bookmarksMenuFolder", "children": [ { "guid": "A8NUOjpsRO1f", "title": "", "index": 0, "dateAdded": 1687548920094000, "lastModified": 1687548920094000, "id": 15, "typeCode": 3, "type": "text/x-moz-place-separator" } ] }, { "guid": "toolbar_____", "title": "toolbar", "index": 1, "dateAdded": 1687548918712000, "lastModified": 1689519935422000, "id": 3, "typeCode": 2, "type": "text/x-moz-place-container", "root": "toolbarFolder", "children": [ { "guid": "Npno2qvkXy1F", "title": "Downloads", "index": 0, "dateAdded": 1688676588125000, "lastModified": 1688676595137000, "id": 19, "typeCode": 1, "type": "text/x-moz-place", "uri": "about:downloads" }, { "guid": "EvEy7VW_sMTG", "title": "ゆるキャン△", "index": 1, "dateAdded": 1689519634292000, "lastModified": 1689519634292000, "id": 20, "typeCode": 1, "type": "text/x-moz-place", "uri": "https://some-site/page-of-this-manga" } ] }, { "guid": "unfiled_____", "title": "unfiled", "index": 3, "dateAdded": 1687548918712000, "lastModified": 1687548919979000, "id": 5, "typeCode": 2, "type": "text/x-moz-place-container", "root": "unfiledBookmarksFolder" }, { "guid": "mobile______", "title": "mobile", "index": 4, "dateAdded": 1687548918955000, "lastModified": 1687548919979000, "id": 6, "typeCode": 2, "type": "text/x-moz-place-container", "root": "mobileFolder" } ] }
         "#;
-        // deserialize
-        let bookmark: BookmarkRootFolder = serde_json::from_str(json_data).unwrap();
-        // for test, just recursively traverse down each children and print the title and lastModified and the type
-        fn traverse_children(children: &Vec<BookmarkNodes>) {
-            for child in children {
+            // deserialize
+            let bookmark: BookmarkRootFolder = serde_json::from_str(json_data).unwrap();
+            // for test, just recursively traverse down each children and print the title and lastModified and the type
+            fn traverse_children(children: &Vec<BookmarkNodes>) {
+                for child in children {
+                    println!(
+                        "title: {}, type: {:#?}, lastModified: {}, uri: {:#?}",
+                        child.title, child.child_type, child.last_modified, child.uri
+                    );
+                    if let Some(children) = &child.children {
+                        traverse_children(children);
+                    }
+                }
+            }
+            traverse_children(&bookmark.children);
+        }
+
+        #[test]
+        fn test_deserialize_bookmark_with_two_nodes() {
+            let nodes = vec![
+                BookmarkNodes::new(
+                    String::from("guid1"),
+                    String::from("title1"),
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
+                    Type::TextXMozPlace,
+                    None,
+                    None,
+                    Some(String::from("uri1")),
+                ),
+                BookmarkNodes::new(
+                    String::from("guid2"),
+                    String::from("title2"),
+                    2,
+                    2,
+                    2,
+                    2,
+                    2,
+                    Type::TextXMozPlace,
+                    None,
+                    None,
+                    Some(String::from("uri2")),
+                ),
+            ];
+            let bookmark: BookmarkRootFolder = BookmarkRootFolder::new(
+                String::from("guid"),
+                String::from("title"),
+                0,
+                0,
+                0,
+                0,
+                0,
+                Type::TextXMozPlaceContainer,
+                String::from("root"),
+                nodes,
+            );
+
+            for child in &bookmark.children {
                 println!(
-                    "title: {}, type: {:#?}, lastModified: {}, uri: {:#?}",
+                    "title: {}, type: {:#?}, lastModified: {:#?}, uri: {:#?}",
                     child.title, child.child_type, child.last_modified, child.uri
                 );
                 if let Some(children) = &child.children {
-                    traverse_children(children);
+                    for grandchild in children {
+                        println!(
+                            "title: {}, type: {:#?}, lastModified: {:#?}, uri: {:#?}",
+                            grandchild.title,
+                            grandchild.child_type,
+                            grandchild.last_modified,
+                            grandchild.uri
+                        );
+                    }
                 }
             }
+
+            // test
+            assert_eq!(bookmark.children.len(), 2);
+            assert_eq!(bookmark.children[0].title, "title1");
+            assert_eq!(bookmark.children[0].uri(), "uri1");
+            assert_eq!(bookmark.children[1].title, "title2");
+            assert_eq!(bookmark.children[1].uri(), "uri2");
         }
-        traverse_children(&bookmark.children);
     }
 }
