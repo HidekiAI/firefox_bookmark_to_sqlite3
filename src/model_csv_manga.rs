@@ -111,12 +111,10 @@ pub mod model_csv_manga {
         }
         pub fn str_to_epoch_micros(time_YYYYmmddTHHMMSS: String) -> i64 {
             // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
-            let timespan_YYYYmmddTHHMMSS = chrono::NaiveDateTime::parse_from_str(
-                &time_YYYYmmddTHHMMSS,
-                "%Y-%m-%dT%H:%M:%S",
-            )
-            .unwrap()
-            .timestamp_micros();
+            let timespan_YYYYmmddTHHMMSS =
+                chrono::NaiveDateTime::parse_from_str(&time_YYYYmmddTHHMMSS, "%Y-%m-%dT%H:%M:%S")
+                    .unwrap()
+                    .timestamp_micros();
             timespan_YYYYmmddTHHMMSS
         }
         pub fn new(model: &MangaModel) -> Self {
@@ -129,20 +127,20 @@ pub mod model_csv_manga {
             };
 
             // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
-            let last_modified = CsvMangaModel::from_epoch_to_str(bookmark_last_modified_epoch_micros);
+            let last_modified =
+                CsvMangaModel::from_epoch_to_str(bookmark_last_modified_epoch_micros);
             // output: "uri_stripped_for_sorting","title","uri","chapter","last_modified","notes","tags"
             // extract chapter if link indicates so...
 
-            let rom_title = match model.title_romanized {
-                Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.clone().as_str())),
-                None => None,
-            };
             CsvMangaModel {
                 title: CsvMangaModel::fix_comma_in_string(model.title.as_str()),
-                romanized_title: rom_title,
-                url: Some(model.url.clone()),
+                romanized_title: match model.title_romanized {
+                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.clone().as_str())),
+                    None => None,
+                },
+                url: Some(CsvMangaModel::fix_comma_in_string(&model.url)),
                 url_with_chapters: match model.url_with_chapter {
-                    Some(ref s) => CsvMangaModel::fix_comma_in_string(s.clone().as_str()),
+                    Some(ref s) => CsvMangaModel::fix_comma_in_string(s.clone().as_str()), // pretty sure commas are illegal in URLs, but just in case
                     None => String::from(""),
                 },
                 chapter: match model.chapter {
@@ -155,7 +153,7 @@ pub mod model_csv_manga {
                     None => String::from(""),
                 },
                 tags: match model.tags.len() > 0 {
-                    true => CsvMangaModel::fix_comma_in_string(model.tags.join(",").as_str()),
+                    true => CsvMangaModel::fix_comma_in_string(model.tags.join(";").as_str()), // NOTE: Using ';' instead of ',' for tags
                     false => String::from(""),
                 },
             }
@@ -234,7 +232,9 @@ pub mod model_csv_manga {
             // a bit tricky on how to deserialize from CSV string, because order matters
             // we we'll have to guess the order of the fields and then deserialize
             let mut rdr = csv::ReaderBuilder::new()
-                .has_headers(false)
+                .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
+                .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
+                .comment(Some(b'#')) // allow # to be on first column to indicate comments
                 .from_reader(csv.as_bytes());
 
             let mut csv_model_des: CsvMangaModel = match rdr.deserialize().next() {
@@ -259,7 +259,8 @@ pub mod model_csv_manga {
             // so, we'll check for those two fields
             let binding = csv_model_des.chapter().clone();
             let ch: &str = binding.as_str();
-            let lm_epoch = CsvMangaModel::str_to_epoch_micros(csv_model_des.last_modified().clone());
+            let lm_epoch =
+                CsvMangaModel::str_to_epoch_micros(csv_model_des.last_modified().clone());
             let mut ch_removed_extra = -1;
             if (ch.contains(".") || ch.contains("-")) {
                 // strip or keep all chars only up to "." or "-" so we can parse it as int
@@ -281,19 +282,32 @@ pub mod model_csv_manga {
                 };
             }
 
-            // assume format is probably fine (for now)
-            let model = CsvMangaModel {
-                title: csv_model_des.title().into(),
-                url_with_chapters: csv_model_des.url_with_chapters().into(),
-                chapter: csv_model_des.chapter().into(),
-                last_modified_YYYYmmddTHHMMSS: csv_model_des.last_modified().into(),
-                notes: csv_model_des.notes().into(),
-                tags: csv_model_des.tags().into(),
-                url: Some(csv_model_des.url_mut().into()),
-                romanized_title: Some(csv_model_des.romanized_title_mut().into()),
-            };
+            //let model = CsvMangaModel {
+            //    title: csv_model_des.title().into(),
+            //    url_with_chapters: csv_model_des.url_with_chapters().into(),
+            //    chapter: csv_model_des.chapter().into(),
+            //    last_modified_YYYYmmddTHHMMSS: csv_model_des.last_modified().into(),
+            //    notes: csv_model_des.notes().into(),
+            //    tags: csv_model_des.tags().into(),
+            //    url: Some(csv_model_des.url_mut().into()),
+            //    romanized_title: Some(csv_model_des.romanized_title_mut().into()),
+            //};
+            // once deserialize, make it into MangaModel
+            let mut model = MangaModel::new_from_required_elements(
+                csv_model_des.title().clone(),
+                csv_model_des.url_with_chapters().clone(),
+                model_manga::CASTAGNOLI.checksum(csv_model_des.url_with_chapters().as_bytes()),
+            );
+            model.last_update = Some(csv_model_des.last_modified().clone());
+            model.notes = Some(csv_model_des.notes().clone());
+            model.tags = csv_model_des
+                .tags()
+                .split(';')
+                .map(|s| s.to_string())
+                .collect();
+
             //let record = model.build_record();
-            Ok(model)
+            Ok(CsvMangaModel::new(&model))
         }
 
         pub fn title(&self) -> &String {
@@ -367,7 +381,7 @@ pub mod model_csv_manga {
         }
 
         pub fn get_last_modified(&self) -> i64 {
-            CsvMangaModel::str_to_epoch_micros( self.last_modified_YYYYmmddTHHMMSS.clone())
+            CsvMangaModel::str_to_epoch_micros(self.last_modified_YYYYmmddTHHMMSS.clone())
         }
         fn strip_chapter_from_url(url_with_chapters: String) -> (String, String) {
             Utils::strip_chapter_from_url(&url_with_chapters)
@@ -561,7 +575,9 @@ pub mod model_csv_manga {
         // read the CSV file (either as a file stream or stdin stream) and convert to Vec<Manga> (uses Manga::from_csv() methods for each rows read)
         pub fn read_csv(input_reader: Box<dyn std::io::Read>) -> Vec<MangaModel> {
             let mut rdr = csv::ReaderBuilder::new()
-                .has_headers(false)
+                .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
+                .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
+                .comment(Some(b'#')) // allow # to be on first column to indicate comments
                 .from_reader(input_reader);
 
             let mut mangas: Vec<MangaModel> = Vec::new();
@@ -662,72 +678,174 @@ pub mod model_csv_manga {
 
     #[cfg(test)]
     mod tests {
-        use crate::model_csv_manga::model_csv_manga::CsvMangaModel;
+        use crate::{
+            model_csv_manga::{self, model_csv_manga::CsvMangaModel},
+            model_manga::{self, model_manga::MangaModel},
+        };
 
         // chose this title for a critical reason that if withinside quotes, there is a UTF8 comma ("、"), which is a problem for CSV if it was converted to ","
         const K_MANGA_TITLE: &str = "ゲート―自衛隊彼の地にて、斯く戦えり";
         // notice that libkakasi converts "ゲート" to "geeto" and knows the difference between the dash in "ゲート" and the dash in "―" (which is a UTF8 dash), sadly it convers the UTF8 comma ("、") to a regular comma (","), in which we force it
-        const K_EXPECTED_ROMANIZED_TITLE: &str = "geeto ― jieitai kano chi nite、 kaku tatakae ri";
+        const K_EXPECTED_ROMANIZED_TITLE: &str = "geeto ― jieitai kano chi nite、 kaku tatakae ri"; // NOTE: the UTF8 comma ("、") is converted to a regular comma (",")
+        const K_MANGA_URL: &str = "https://example.com/manga/gate/";
         const K_MANGA_URL_WITH_CHAPTERS: &str = "https://example.com/manga/gate-chapter-10/";
         const K_MANGA_CHAPTER: &str = "10";
         const K_MANGA_LAST_MODIFIED: &str = "2021-07-22T12:34:56";
-        const K_MANGA_NOTES: &str = "Notes may have commas, but they will get replaced with \"、\"";
-        const K_MANGA_TAGS: &str = "#action; #isekai; #fantasy; #shounen";
+        //const K_MANGA_NOTES_RAW: &str    = "Notes may have commas, (<- this will be replaced) but they will get replaced with \"、\" - this also tests for double-quotes issues";
+        //const K_MANGA_NOTES_FIXED: &str = "Notes may have commas、 (<- this will be replaced) but they will get replaced with \"、\" - this also tests for double-quotes issues";
+        const K_MANGA_NOTES_RAW: &str   = "the  comma";
+        const K_MANGA_NOTES_FIXED: &str = "the  comma";
+        const K_MANGA_TAGS_SEMICOLON_SEPARATED: &str = "#action; #isekai; #fantasy; #shounen";
         // note that this version needs to append "\n" at tail separately
-        const K_MANGA_CSV_SORT_BY_URL : &str = "\"https://example.com/manga/gate-chapter-10/\",\"ゲート―自衛隊彼の地にて、斯く戦えり\",\"https://example.com/manga/gate-chapter-10/\",\"10\",\"2021-07-22T12:34:56\",\"Notes may have commas, but they will get replaced with \"\"、\"\"\",\"#action; #isekai; #fantasy; #shounen\",\"geeto ― jieitai kano chi nite、 kaku tatakae ri\"" ;
-        const K_MANGA_CSV: &str = "\"ゲート―自衛隊彼の地にて、斯く戦えり\",\"https://example.com/manga/gate-chapter-10/\",\"10\",\"2021-07-22T12:34:56\",\"Notes may have commas, but they will get replaced with \"\"、\"\"\",\"#action; #isekai; #fantasy; #shounen\"";
+        fn quoted(s: &str) -> String {
+            format!("\"{}\"", s)
+        }
+        fn make_CSV_test_string() -> String {
+            //const K_MANGA_CSV_RAW: &str = "\"ゲート―自衛隊彼の地にて、斯く戦えり\",\"https://example.com/manga/gate-chapter-10/\",\"10\",\"2021-07-22T12:34:56\",\"Notes may have commas, (<- this will be replaced) but they will get replaced with \"、\"\",\"#action; #isekai; #fantasy; #shounen\"";
+            let mut csv = String::new();
+            csv.push_str(&quoted(K_MANGA_TITLE));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_URL_WITH_CHAPTERS));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_CHAPTER));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_LAST_MODIFIED));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_NOTES_RAW));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_TAGS_SEMICOLON_SEPARATED));
+
+            // for v2, adding romanized_title and url
+            csv.push(',');
+            csv.push_str(&quoted(K_EXPECTED_ROMANIZED_TITLE));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_URL));
+
+            //quoted(&csv)
+            csv
+        }
+        fn make_CSV_fixed_test_string() -> String {
+            //const K_MANGA_CSV_FIXED: &str = "\"ゲート―自衛隊彼の地にて、斯く戦えり\",\"https://example.com/manga/gate-chapter-10/\",\"10\",\"2021-07-22T12:34:56\",\"Notes may have commas、 (<- this will be replaced) but they will get replaced with \"、\"\",\"#action; #isekai; #fantasy; #shounen\"";
+            let mut csv = String::new();
+            csv.push_str(&quoted(K_MANGA_TITLE));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_URL_WITH_CHAPTERS));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_CHAPTER));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_LAST_MODIFIED));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_NOTES_FIXED)); // NOTE: for unit-test validations, we use the fixed version instead of calling fix_comma_in_string() since that invalidates the purpose of "unit" testing
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_TAGS_SEMICOLON_SEPARATED));
+
+            // for V2, addeing romanized_title and url
+            csv.push(',');
+            csv.push_str(&quoted(K_EXPECTED_ROMANIZED_TITLE));
+            csv.push(',');
+            csv.push_str(&quoted(K_MANGA_URL));
+
+            //quoted(&csv)
+            csv
+        }
 
         // Model based on constants defined:
-        fn make_default_model() -> CsvMangaModel {
-            CsvMangaModel {
-                title: String::from(K_MANGA_TITLE),
-                romanized_title: Some(String::from(K_EXPECTED_ROMANIZED_TITLE)),
-                url: Some(String::from(K_MANGA_URL_WITH_CHAPTERS)),
-                url_with_chapters: String::from(K_MANGA_URL_WITH_CHAPTERS),
-                chapter: String::from(K_MANGA_CHAPTER),
-                last_modified_YYYYmmddTHHMMSS: String::from(K_MANGA_LAST_MODIFIED),
-                notes: String::from(K_MANGA_NOTES),
-                tags: String::from(K_MANGA_TAGS),
+        fn make_default_model() -> (MangaModel, CsvMangaModel) {
+            let mut manga_model = MangaModel::new_from_required_elements(
+                String::from(K_MANGA_TITLE),
+                String::from(K_MANGA_URL_WITH_CHAPTERS),
+                model_manga::CASTAGNOLI.checksum(K_MANGA_URL_WITH_CHAPTERS.as_bytes()),
+            );
+            manga_model.url_with_chapter = Some(String::from(K_MANGA_URL_WITH_CHAPTERS));
+            manga_model.chapter = Some(String::from(K_MANGA_CHAPTER));
+            manga_model.last_update = Some(String::from(K_MANGA_LAST_MODIFIED));
+            manga_model.notes = Some(String::from(K_MANGA_NOTES_FIXED));
+            manga_model.tags =
+                MangaModel::csv_to_tags(String::from(K_MANGA_TAGS_SEMICOLON_SEPARATED).as_str());
+            assert!(manga_model.title_romanized.clone().is_some());
+            assert_ne!(
+                manga_model.title_romanized.clone().unwrap(), // because regular version mismatches on UTF8 comma ("、"), it's not the same as the expected
+                K_EXPECTED_ROMANIZED_TITLE
+            );
+
+            let mut csv_manga_model = CsvMangaModel::new(&manga_model.clone());
+            assert_eq!(
+                csv_manga_model.romanized_title.clone().unwrap(), // Unlike regular version, CSV verion should have UTF8 comma ("、") intact
+                K_EXPECTED_ROMANIZED_TITLE
+            );
+            (manga_model, csv_manga_model)
+        }
+
+        #[test]
+        fn test_emedded_quotes() {
+            // Output: 'this has embedded "quotes" in it' 
+            let my_csv_string = "this has embedded \"quotes\" in it";
+
+            let mut reader = csv::ReaderBuilder::new()
+                .has_headers(false)
+                .escape(Some(b'\\'))
+                .from_reader(my_csv_string.as_bytes());
+
+            for result in reader.records() {
+                match result {
+                    Ok(record) => {
+                        for field in record.iter() {
+                            println!("{}", field);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                    }
+                }
             }
         }
 
         #[test]
         fn test_title() {
-            let manga = make_default_model();
-            assert_eq!(manga.title(), &K_MANGA_TITLE);
+            let (manga, csv_manga) = make_default_model();
+            assert_eq!(csv_manga.title(), &K_MANGA_TITLE);
         }
 
         #[test]
         fn test_romanized_title() {
-            let mut manga = make_default_model();
-            assert_eq!(manga.romanized_title(), &K_EXPECTED_ROMANIZED_TITLE);
-            assert_eq!(manga.romanized_title_mut(), &K_EXPECTED_ROMANIZED_TITLE);
+            let (manga, csv_manga) = make_default_model();
+            assert_eq!(
+                csv_manga.clone().romanized_title(),
+                &K_EXPECTED_ROMANIZED_TITLE
+            );
+            assert_eq!(
+                csv_manga.clone().romanized_title_mut(),
+                &K_EXPECTED_ROMANIZED_TITLE
+            );
         }
 
         // test serialization to CSV
         #[test]
         fn test_to_csv() {
-            let manga = make_default_model();
-            let csv = manga.to_csv();
+            let (manga, csv_manga) = make_default_model();
+            let csv = csv_manga.to_csv();
             // note that to_csv() appends "\n" at tail
-            assert_eq!(&csv, &(K_MANGA_CSV_SORT_BY_URL.to_owned() + "\n"));
+            //assert_eq!(&csv, &(K_MANGA_CSV.to_owned() + "\n"));
+            assert_eq!(&csv, &make_CSV_fixed_test_string());
         }
 
         // test deserialization from CSV
         #[test]
         fn test_from_csv() {
-            println!("K_MANGA_CSV:\n\t{}", K_MANGA_CSV);
+            let test_string = make_CSV_test_string();
+            println!("# K_MANGA_CSV:\n#\t{}", test_string);
 
-            let manga = CsvMangaModel::from_csv(&K_MANGA_CSV).unwrap();
-            println!("manga:\n\t{}", manga);
+            let manga = CsvMangaModel::from_csv(&test_string).unwrap();
+            println!("# manga:\n#\t{}\n#", manga);
 
+            assert_eq!(manga.notes(), &K_MANGA_NOTES_FIXED);
             assert_eq!(manga.title(), &K_MANGA_TITLE);
             assert_eq!(manga.romanized_title(), &K_EXPECTED_ROMANIZED_TITLE);
             assert_eq!(manga.url_with_chapters(), &K_MANGA_URL_WITH_CHAPTERS);
+            assert_eq!(manga.url(), &K_MANGA_URL);
             assert_eq!(manga.chapter(), &K_MANGA_CHAPTER);
             assert_eq!(manga.last_modified(), &K_MANGA_LAST_MODIFIED);
-            assert_eq!(manga.notes(), &K_MANGA_NOTES);
-            assert_eq!(manga.tags(), &K_MANGA_TAGS);
+            assert_eq!(manga.tags(), &K_MANGA_TAGS_SEMICOLON_SEPARATED);
         }
     }
 }

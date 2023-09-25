@@ -1,7 +1,7 @@
 use kakasi;
 use url::{ParseError, Url};
 
-use crc::{Crc, Algorithm, CRC_32_ISCSI};
+use crc::{Algorithm, Crc, CRC_32_ISCSI};
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
 
 pub mod model_manga {
@@ -148,20 +148,34 @@ pub mod model_manga {
     }
 
     impl MangaModel {
-        // disallow empty title, url, or id; note that id passed is commonly/usually from
-        // other system such as SQLite, so it is not checked for validity for uniqueness as
-        // primary key.
-        pub fn new_from_required_elements(title: String, url: String, id: u32) -> MangaModel {
-            let title_romanized = match kakasi::is_japanese(title.as_str()) {
-                kakasi::IsJapanese::True => Some(kakasi::convert(title.as_str()).romaji),
+        pub fn romanize_title_self(&mut self) {
+            let title_romanized = match kakasi::is_japanese(self.title.as_str()) {
+                kakasi::IsJapanese::True => Some(kakasi::convert(self.title.as_str()).romaji),
                 _ => None,
             };
+            self.title_romanized = title_romanized;
+        }
+        pub fn romanize_title(title: &str) -> Option<String> {
+            match kakasi::is_japanese(title) {
+                kakasi::IsJapanese::True => Some(kakasi::convert(title).romaji),
+                _ => None,
+            }
+        }
 
-            // validate url
-            let url_parsed = match Url::parse(&url) {
-                Ok(validated_url) => validated_url,
-                Err(e) => panic!("Error parsing url: {}", e),
-            };
+        pub fn csv_to_tags(csv: &str) -> Vec<String> {
+            let mut tags: Vec<String> = Vec::new();
+            for tag in csv.split(",") {
+                tags.push(tag.to_string());
+            }
+            tags
+        }
+        pub fn url_and_chapter(
+            url_parsed: Url,
+        ) -> (
+            String,         /*url_as_is*/
+            Option<String>, /*base_url*/
+            Option<String>, /*chapter*/
+        ) {
             // i.e. "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu-chapter-12-1/"
             // url_as_is = "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu-chapter-12-1/"
             // base_url = "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu/"
@@ -172,6 +186,10 @@ pub mod model_manga {
             // chapter = None
             let (url_as_is, base_url, chapter) = {
                 let mut path_segments = url_parsed.path_segments().unwrap().collect::<Vec<_>>();
+                // if last segment is empty, then pop it off
+                if path_segments.last().unwrap().is_empty() {
+                    path_segments.pop();
+                }
                 if let Some(last_segment) = path_segments.last_mut() {
                     // IF the url contains string "-chapter", then extract chapter number AND base_url
                     if last_segment.contains("-chapter-") {
@@ -189,7 +207,23 @@ pub mod model_manga {
 
                         path_segments.pop(); // remove last segment
                         path_segments.push(base_url_leftside); // append leftside of "-chapter-" to path_segments
-                        let base_url = path_segments.join("/"); // always ends with "/"
+                                                               // format base_url to have the schema, Domain, port if any, and path_segments
+                                                               // i.e. "https://some.example.com/mymanga/"
+                        let base_url = url_parsed.scheme().to_string()
+                            + "://"
+                            + url_parsed.domain().unwrap()
+                            + url_parsed
+                                .port()
+                                .map_or("".to_string(), |port| format!(":{}", port))
+                                .as_str()
+                            + "/"
+                            + path_segments.join("/").as_str(); // joins together each segments of the paths with "/" and makes it into a string
+
+                        // if base_url does not end with "/", then append it
+                        let base_url = match base_url.ends_with("/") {
+                            true => base_url,
+                            false => base_url + "/",
+                        };
 
                         // return tuple of url_as_is, base_url, and chapter
                         (
@@ -212,25 +246,67 @@ pub mod model_manga {
                     )
                 }
             };
-
-            let url_for_model = match base_url {
-                Some(base_url) => base_url,
-                None => url_as_is,
-            };
-            let url_chapter = match chapter.clone() {
-                Some(chapter) => Some(format!("{}chapter-{}", url_for_model, chapter)),
-                None => match url_parsed.as_str().contains("chapter") {
-                    true => Some(url_parsed.as_str().to_string()),
-                    false => None,
+            // if base_url does not end with "/", then append it
+            let base_url = match base_url.clone() {
+                Some(base_url) => match base_url.ends_with("/") {
+                    true => Some(base_url),
+                    false => Some(base_url + "/"),
                 },
+                None => None,
             };
+
+            #[cfg(debug_assertions)]
+            {
+                println!(
+                    "## MangaModel::url_and_chapter: {:?}\n#\turl_parsed='{}'\n#\turl_as_is='{}', base_url='{:?}', chapter='{:?}'",
+                    url_parsed,
+                    url_parsed.as_str(),
+                    url_as_is,
+                    base_url,
+                    chapter,
+                );
+            }
+            (url_as_is, base_url, chapter)
+        }
+
+        // disallow empty title, url, or id; note that id passed is commonly/usually from
+        // other system such as SQLite, so it is not checked for validity for uniqueness as
+        // primary key.
+        pub fn new_from_required_elements(
+            title_possibly_in_kanji: String,
+            url_with_possible_chapter: String,
+            id: u32,
+        ) -> MangaModel {
+            let title_romanized = MangaModel::romanize_title(&title_possibly_in_kanji);
+
+            // validate url
+            let url_parsed = match Url::parse(&url_with_possible_chapter) {
+                Ok(validated_url) => validated_url,
+                Err(e) => panic!("Error parsing url: {}", e),
+            };
+
+            let (url_as_is, base_url, chapter) = MangaModel::url_and_chapter(url_parsed.clone());
+            #[cfg(debug_assertions)]
+            {
+                println!("# MangaModel::new_from_required_elements: title='{}', url='{}', id='{}'\n\ttitle_romanized='{:?}', url_with_chapter='{:?}', chapter='{:?}'",
+                    title_possibly_in_kanji,
+                    url_with_possible_chapter,
+                    id,
+                    title_romanized,
+                    url_with_possible_chapter,
+                    chapter,
+                );
+            }
 
             MangaModel {
                 id: id,
-                title: title,
+                title: title_possibly_in_kanji,
                 title_romanized: title_romanized,
-                url: url_for_model,
-                url_with_chapter: url_chapter,
+                url: match base_url {
+                    Some(base_url) => base_url,
+                    None => url_as_is.clone(),
+                },
+                url_with_chapter: Some(url_as_is.clone()),
                 chapter: chapter.clone(),
                 last_update: None,
                 notes: None,

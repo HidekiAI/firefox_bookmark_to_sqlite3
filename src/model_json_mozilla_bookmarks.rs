@@ -217,26 +217,101 @@ pub mod model_json_mozilla_bookmarks {
 
         #[test]
         fn test_deserialize_bookmark_with_two_nodes() {
-            let json_data = json!({
-                "guid": "bookmark-guid",
-                "title": "Bookmark Title",
-                "type": "text/x-moz-place",
-                "uri": "https://example.com",
-                "children": [
-                    {
-                        "guid": "child-guid-1",
-                        "title": "Child Bookmark 1",
-                        "type": "text/x-moz-place",
-                        "uri": "https://example.com/child1"
-                    },
-                    {
-                        "guid": "child-guid-2",
-                        "title": "Child Bookmark 2",
-                        "type": "text/x-moz-place",
-                        "uri": "https://example.com/child2"
-                    }
-                ]
-            });
+            let json_data = json!(
+{
+    "guid": "root________",
+    "title": "",
+    "index": 0,
+    "dateAdded": 1687548918712000 as i64,
+    "lastModified": 1689519935422000 as i64,
+    "id": 1,
+    "typeCode": 2,
+    "type": "text/x-moz-place-container",
+    "root": "placesRoot",
+    "children": [
+        {
+            "guid": "menu________",
+            "title": "menu",
+            "index": 0,
+            "dateAdded": 1687548918712000 as i64,
+            "lastModified": 1688395173395000 as i64,
+            "id": 2,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "bookmarksMenuFolder",
+            "children": [
+                {
+                    "guid": "A8NUOjpsRO1f",
+                    "title": "",
+                    "index": 0,
+                    "dateAdded": 1687548920094000 as i64,
+                    "lastModified": 1687548920094000 as i64,
+                    "id": 15,
+                    "typeCode": 3,
+                    "type": "text/x-moz-place-separator"
+                }
+            ]
+        },
+        {
+            "guid": "toolbar_____",
+            "title": "toolbar",
+            "index": 1,
+            "dateAdded": 1687548918712000 as i64,
+            "lastModified": 1689519935422000 as i64,
+            "id": 3,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "toolbarFolder",
+            "children": [
+                {
+                    "guid": "Npno2qvkXy1F",
+                    "title": "Downloads",
+                    "index": 0,
+                    "dateAdded": 1688676588125000 as i64,
+                    "lastModified": 1688676595137000 as i64,
+                    "id": 19,
+                    "typeCode": 1,
+                    "type": "text/x-moz-place",
+                    "uri": "about:downloads"
+                },
+                {
+                    "guid": "EvEy7VW_sMTG",
+                    "title": "ゆるキャン△",
+                    "index": 1,
+                    "dateAdded": 1689519634292000 as i64,
+                    "lastModified": 1689519634292000 as i64,
+                    "id": 20,
+                    "typeCode": 1,
+                    "type": "text/x-moz-place",
+                    "uri": "https://some-site/page-of-this-manga"
+                }
+            ]
+        },
+        {
+            "guid": "unfiled_____",
+            "title": "unfiled",
+            "index": 3,
+            "dateAdded": 1687548918712000 as i64,
+            "lastModified": 1687548919979000 as i64,
+            "id": 5,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "unfiledBookmarksFolder"
+        },
+        {
+            "guid": "mobile______",
+            "title": "mobile",
+            "index": 4,
+            "dateAdded": 1687548918955000 as i64,
+            "lastModified": 1687548919979000 as i64,
+            "id": 6,
+            "typeCode": 2,
+            "type": "text/x-moz-place-container",
+            "root": "mobileFolder"
+        }
+    ]
+}
+        );
             let bookmark: BookmarkRootFolder = serde_json::from_value(json_data).unwrap();
 
             for child in &bookmark.children {
