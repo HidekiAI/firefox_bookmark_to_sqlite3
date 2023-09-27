@@ -231,7 +231,7 @@ pub mod model_csv_manga {
         pub fn from_csv(csv: &str) -> Result<CsvMangaModel, Box<dyn std::error::Error>> {
             // a bit tricky on how to deserialize from CSV string, because order matters
             // we we'll have to guess the order of the fields and then deserialize
-            let mut rdr = csv::ReaderBuilder::new()
+            let mut rdr: csv::Reader<&[u8]> = csv::ReaderBuilder::new()
                 .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
                 .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
                 .comment(Some(b'#')) // allow # to be on first column to indicate comments
@@ -293,21 +293,28 @@ pub mod model_csv_manga {
             //    romanized_title: Some(csv_model_des.romanized_title_mut().into()),
             //};
             // once deserialize, make it into MangaModel
-            let mut model = MangaModel::new_from_required_elements(
+            match MangaModel::new_from_required_elements(
                 csv_model_des.title().clone(),
                 csv_model_des.url_with_chapters().clone(),
                 model_manga::CASTAGNOLI.checksum(csv_model_des.url_with_chapters().as_bytes()),
-            );
-            model.last_update = Some(csv_model_des.last_modified().clone());
-            model.notes = Some(csv_model_des.notes().clone());
-            model.tags = csv_model_des
-                .tags()
-                .split(';')
-                .map(|s| s.to_string())
-                .collect();
+            ) {
+                Ok(mut model) => {
+                    model.last_update = Some(csv_model_des.last_modified().clone());
+                    model.notes = Some(csv_model_des.notes().clone());
+                    model.tags = csv_model_des
+                        .tags()
+                        .split(';')
+                        .map(|s| s.to_string())
+                        .collect();
 
-            //let record = model.build_record();
-            Ok(CsvMangaModel::new(&model))
+                    //let record = model.build_record();
+                    Ok(CsvMangaModel::new(&model))
+                }
+                Err(e) => {
+                    let err_msg = format!("Error: {}", e.to_string());
+                    return Err(Box::from(err_msg));
+                }
+            }
         }
 
         pub fn title(&self) -> &String {
@@ -492,6 +499,9 @@ pub mod model_csv_manga {
 
     pub struct Utils {
         csv_writer: Writer<Box<dyn Write + 'static>>, // mutable reference to a trait object
+
+        // iterator for reading each CSV rows that is mutable
+        rdr: csv::Reader<Box<dyn std::io::Read + 'static>>,
     }
     impl Drop for Utils {
         fn drop(&mut self) {
@@ -502,12 +512,71 @@ pub mod model_csv_manga {
 
     impl Utils {
         // pass in writer, such as stdout or file
-        pub fn new(output_writer: Box<dyn Write>) -> Utils {
+        pub fn new(output_writer: Box<dyn Write>, input_reader: Box<dyn std::io::Read>) -> Utils {
             // fail immediately if output_writer is not a streamable writer
             Utils {
                 csv_writer: csv::WriterBuilder::new()
                     .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
                     .from_writer(output_writer),
+
+                rdr: csv::ReaderBuilder::new()
+                    .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
+                    .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
+                    .comment(Some(b'#')) // allow # to be on first column to indicate comments
+                    .from_reader(input_reader),
+            }
+        }
+
+        // reset iterator by setting new input_reader
+        pub fn reset(&mut self, input_reader: Box<dyn std::io::Read>) {
+            self.rdr = csv::ReaderBuilder::new()
+                .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
+                .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
+                .comment(Some(b'#')) // allow # to be on first column to indicate comments
+                .from_reader(input_reader);
+        }
+
+        // iterator rdr to next row for deserializing
+        pub fn next(&mut self) -> Option<Result<MangaModel, Error>> {
+            // read as CsvMangaModel
+            let result = self.rdr.deserialize().next();
+            // return as MangaModel IF we've not reached the end of stream (None if end of stream)
+            match result {
+                Some(Ok(result_record)) => {
+                    let record: CsvMangaModel = result_record;
+                    #[cfg(debug_assertions)]
+                    {
+                        //
+                    }
+
+                    // push a copy
+                    match MangaModel::new_from_required_elements(
+                        record.title,
+                        record.url_with_chapters.clone(),
+                        model_manga::CASTAGNOLI
+                            .checksum(record.url_with_chapters.clone().as_bytes()),
+                    ) {
+                        Ok(mut m) => {
+                            m.last_update = Some(record.last_modified_YYYYmmddTHHMMSS.clone());
+                            m.notes = Some(record.notes.clone());
+                            m.tags = record
+                                .tags
+                                .split(';')
+                                .map(|s| s.to_string())
+                                .collect::<Vec<String>>();
+                            return Some(Ok(m)); // brute-force bail out immediately here
+                        }
+                        Err(e) => {
+                            println!("Error: could not create MangaModel from CSV record");
+                            return None;    // brute-force bail out immediately here
+                        }
+                    };
+                }
+                Some(Err(e)) => {
+                    eprintln!("Error: {}", e);
+                    None
+                }
+                None => None,
             }
         }
 
@@ -574,31 +643,21 @@ pub mod model_csv_manga {
 
         // read the CSV file (either as a file stream or stdin stream) and convert to Vec<Manga> (uses Manga::from_csv() methods for each rows read)
         pub fn read_csv(input_reader: Box<dyn std::io::Read>) -> Vec<MangaModel> {
-            let mut rdr = csv::ReaderBuilder::new()
-                .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
-                .escape(Some(b'\\')) // rather than ("") ours use (\") to represent embedded quotes
-                .comment(Some(b'#')) // allow # to be on first column to indicate comments
-                .from_reader(input_reader);
-
+            let mut util = Utils::new(Box::new(std::io::stdout()), input_reader); // should auto-reset to head of stream, so no need to reset()
             let mut mangas: Vec<MangaModel> = Vec::new();
             //mangas.extend(rdr.deserialize::<Manga>());
-            for result in rdr.deserialize() {
+            //for result in rdr.deserialize() {
+            for result in util.next() {
                 match result {
                     Ok(result_record) => {
-                        let record: CsvMangaModel = result_record;
+                        let record = CsvMangaModel::new(&result_record);
                         #[cfg(debug_assertions)]
                         {
                             //
                         }
 
                         // push a copy
-                        let model: MangaModel = MangaModel::new_from_required_elements(
-                            record.title,
-                            record.url_with_chapters.clone(),
-                            model_manga::CASTAGNOLI
-                                .checksum(record.url_with_chapters.clone().as_bytes()),
-                        );
-                        mangas.push(model);
+                        mangas.push(result_record);
                     }
                     Err(e) => {
                         eprintln!("Error: {}", e);
@@ -627,47 +686,30 @@ pub mod model_csv_manga {
             bookmark_last_modified_epoch_micros: i64,
             bookmark_uri: &String,
             bookmark_title: &String,
-        ) -> CsvMangaModel {
-            let mut mm: MangaModel = MangaModel::new_from_required_elements(
+        ) -> Option<CsvMangaModel> {
+            match MangaModel::new_from_required_elements(
                 bookmark_title.clone(),
                 bookmark_uri.clone(),
                 model_manga::CASTAGNOLI.checksum(bookmark_uri.as_bytes()),
-            );
-            mm.last_update = Some(CsvMangaModel::from_epoch_to_str(
-                bookmark_last_modified_epoch_micros,
-            ));
+            ) {
+                Ok(mut mm) => {
+                    mm.last_update = Some(CsvMangaModel::from_epoch_to_str(
+                        bookmark_last_modified_epoch_micros,
+                    ));
 
-            let m = CsvMangaModel::new(&mm);
-            let mut record = m.build_record();
-            // write it
-            self.csv_writer.write_record(&record).unwrap();
-            m
+                    let m = CsvMangaModel::new(&mm);
+                    let mut record = m.build_record();
+                    // write it
+                    self.csv_writer.write_record(&record).unwrap();
+                    Some(m)
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    None
+                }
+            }
         }
 
-        //      ""2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-1/"2023-09-21T18:54:30", "1/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", " "2023-09-21T18:54:30"https://rawkuma.com/overlord", "oobaaroodo"
-        //      ""2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-1/"2023-09-21T18:54:30", "1/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", " "2023-09-21T18:54:30"https://rawkuma.com/overlord", "Overlord"
-        //      ""2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-2/"2023-09-21T18:54:30", "2/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", " "2023-09-21T18:54:30"https://rawkuma.com/overlord", "Overlord"
-        //      "https://rawkuma.com/overlord-chapter-1/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#", "https://rawkuma.com/overlord/", "Overlord"
-        //      "https://rawkuma.com/overlord-chapter-2/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#", "https://rawkuma.com/overlord/", "Overlord"
-        //      " ""https://rawkuma.com/overlord","oobaaroodo","オーバーロード"," ""https://rawkuma.com/overlord-chapter-1/""","1/""","","",""
-        //      "https://rawkuma.com/overlord/","Overlord Chapter 1 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-1/","1","2023-09-16T03:00:05","","#"
-        //      "https://rawkuma.com/overlord/","Overlord Chapter 1 Raw - Rawkuma","Overlord Chapter 1 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-1/","1","2023-09-16T03:00:05","","#"
-        //      "https://rawkuma.com/overlord/","Overlord Chapter 2 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-2/","2","2023-09-16T02:57:37","","#"
-        //      "https://rawkuma.com/overlord/","Overlord Chapter 2 Raw - Rawkuma","Overlord Chapter 2 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-2/","2","2023-09-16T02:57:37","","#"
-        //      " ""https://rawkuma.com/overlord","Overlord","Overlord"," ""https://rawkuma.com/overlord-chapter-1/""","1/""","","",""
-        //      " ""https://rawkuma.com/overlord","Overlord","Overlord"," ""https://rawkuma.com/overlord-chapter-2/""","2/""","","",""
-        //      "oobaaroodo", "オーバーロード", " "2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-1/"2023-09-21T18:54:30", "1/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30"
-        //      "Overlord Chapter 1 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-1/","1","2023-09-16T03:00:05","","#","https://rawkuma.com/overlord/","Overlord Chapter 1 Raw - Rawkuma"
-        //      "Overlord Chapter 2 Raw - Rawkuma","https://rawkuma.com/overlord-chapter-2/","2","2023-09-16T02:57:37","","#","https://rawkuma.com/overlord/","Overlord Chapter 2 Raw - Rawkuma"
-        //      "Overlord"," ""https://rawkuma.com/overlord-chapter-1/""","1/""","","",""," ""https://rawkuma.com/overlord","Overlord"
-        //      "Overlord", "https://rawkuma.com/overlord-chapter-1/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#"
-        //      "Overlord", "https://rawkuma.com/overlord-chapter-2/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#"
-        //      "Overlord"," ""https://rawkuma.com/overlord-chapter-2/""","2/""","","",""," ""https://rawkuma.com/overlord","Overlord"
-        //      "Overlord", "Overlord", " "2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-1/"2023-09-21T18:54:30", "1/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30"
-        //      "Overlord", "Overlord", " "2023-09-21T18:54:30"https://rawkuma.com/overlord-chapter-2/"2023-09-21T18:54:30", "2/"2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30"
-        //      "Overlord", "Overlord", "https://rawkuma.com/overlord-chapter-1/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#"
-        //      "Overlord", "Overlord", "https://rawkuma.com/overlord-chapter-2/", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "2023-09-21T18:54:30", "#"
-        //      "オーバーロード"," ""https://rawkuma.com/overlord-chapter-1/""","1/""","","",""," ""https://rawkuma.com/overlord","oobaaroodo"
         pub fn record(&mut self, m: &mut MangaModel) {
             let mut c = CsvMangaModel::new(m);
             let r = c.build_record_update();
@@ -693,7 +735,7 @@ pub mod model_csv_manga {
         const K_MANGA_LAST_MODIFIED: &str = "2021-07-22T12:34:56";
         //const K_MANGA_NOTES_RAW: &str    = "Notes may have commas, (<- this will be replaced) but they will get replaced with \"、\" - this also tests for double-quotes issues";
         //const K_MANGA_NOTES_FIXED: &str = "Notes may have commas、 (<- this will be replaced) but they will get replaced with \"、\" - this also tests for double-quotes issues";
-        const K_MANGA_NOTES_RAW: &str   = "the  comma";
+        const K_MANGA_NOTES_RAW: &str = "the  comma";
         const K_MANGA_NOTES_FIXED: &str = "the  comma";
         const K_MANGA_TAGS_SEMICOLON_SEPARATED: &str = "#action; #isekai; #fantasy; #shounen";
         // note that this version needs to append "\n" at tail separately
@@ -755,7 +797,8 @@ pub mod model_csv_manga {
                 String::from(K_MANGA_TITLE),
                 String::from(K_MANGA_URL_WITH_CHAPTERS),
                 model_manga::CASTAGNOLI.checksum(K_MANGA_URL_WITH_CHAPTERS.as_bytes()),
-            );
+            )
+            .unwrap(); // for unit-tests, assume that it's always valid
             manga_model.url_with_chapter = Some(String::from(K_MANGA_URL_WITH_CHAPTERS));
             manga_model.chapter = Some(String::from(K_MANGA_CHAPTER));
             manga_model.last_update = Some(String::from(K_MANGA_LAST_MODIFIED));
@@ -778,7 +821,7 @@ pub mod model_csv_manga {
 
         #[test]
         fn test_emedded_quotes() {
-            // Output: 'this has embedded "quotes" in it' 
+            // Output: 'this has embedded "quotes" in it'
             let my_csv_string = "this has embedded \"quotes\" in it";
 
             let mut reader = csv::ReaderBuilder::new()

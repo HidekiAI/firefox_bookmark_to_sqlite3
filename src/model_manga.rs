@@ -148,16 +148,32 @@ pub mod model_manga {
     }
 
     impl MangaModel {
+        fn trim_quotes(s: &str) -> String {
+            let mut s = s.to_string();
+            if s.starts_with("\"") {
+                s.remove(0);
+            }
+            if s.ends_with("\"") {
+                s.pop();
+            }
+            s.trim().to_string()
+        }
+
         pub fn romanize_title_self(&mut self) {
             let title_romanized = match kakasi::is_japanese(self.title.as_str()) {
-                kakasi::IsJapanese::True => Some(kakasi::convert(self.title.as_str()).romaji),
+                kakasi::IsJapanese::True => Some(Self::trim_quotes(
+                    kakasi::convert(self.title.as_str()).romaji.as_str(),
+                )),
                 _ => None,
             };
             self.title_romanized = title_romanized;
         }
+
         pub fn romanize_title(title: &str) -> Option<String> {
             match kakasi::is_japanese(title) {
-                kakasi::IsJapanese::True => Some(kakasi::convert(title).romaji),
+                kakasi::IsJapanese::True => {
+                    Some(Self::trim_quotes(kakasi::convert(title).romaji.as_str()))
+                }
                 _ => None,
             }
         }
@@ -165,10 +181,11 @@ pub mod model_manga {
         pub fn csv_to_tags(csv: &str) -> Vec<String> {
             let mut tags: Vec<String> = Vec::new();
             for tag in csv.split(",") {
-                tags.push(tag.to_string());
+                tags.push(Self::trim_quotes(tag).to_string());
             }
             tags
         }
+
         pub fn url_and_chapter(
             url_parsed: Url,
         ) -> (
@@ -227,44 +244,44 @@ pub mod model_manga {
 
                         // return tuple of url_as_is, base_url, and chapter
                         (
-                            url_parsed.as_str().to_string(), // url_as_is
-                            Some(base_url),                  // base_url
-                            Some(chapter),                   // chapter
+                            Self::trim_quotes(url_parsed.as_str()).to_string(), // url_as_is
+                            Some(Self::trim_quotes(base_url.as_str())),         // base_url
+                            Some(Self::trim_quotes(chapter.as_str())),          // chapter
                         )
                     } else {
                         (
-                            url_parsed.as_str().to_string(),       // url_as_is
-                            Some(url_parsed.as_str().to_string()), // base_url
-                            None,                                  // chapter
+                            Self::trim_quotes(url_parsed.as_str()).to_string(), // url_as_is
+                            Some(Self::trim_quotes(url_parsed.as_str())),       // base_url
+                            None,                                               // chapter
                         )
                     }
                 } else {
                     (
-                        url_parsed.as_str().to_string(), // url_as_is
-                        None,                            // base_url
-                        None,                            // chapter
+                        Self::trim_quotes(url_parsed.as_str()).to_string(), // url_as_is
+                        None,                                               // base_url
+                        None,                                               // chapter
                     )
                 }
             };
             // if base_url does not end with "/", then append it
             let base_url = match base_url.clone() {
                 Some(base_url) => match base_url.ends_with("/") {
-                    true => Some(base_url),
-                    false => Some(base_url + "/"),
+                    true => Some(Self::trim_quotes(base_url.as_str())),
+                    false => Some(Self::trim_quotes((base_url + "/").as_str())),
                 },
                 None => None,
             };
 
             #[cfg(debug_assertions)]
             {
-                println!(
-                    "## MangaModel::url_and_chapter: {:?}\n#\turl_parsed='{}'\n#\turl_as_is='{}', base_url='{:?}', chapter='{:?}'",
-                    url_parsed,
-                    url_parsed.as_str(),
-                    url_as_is,
-                    base_url,
-                    chapter,
-                );
+                //println!(
+                //    "## MangaModel::url_and_chapter: {:?}\n#\turl_parsed='{}'\n#\turl_as_is='{}', base_url='{:?}', chapter='{:?}'",
+                //    url_parsed,
+                //    url_parsed.as_str(),
+                //    url_as_is,
+                //    base_url,
+                //    chapter,
+                //);
             }
             (url_as_is, base_url, chapter)
         }
@@ -276,42 +293,60 @@ pub mod model_manga {
             title_possibly_in_kanji: String,
             url_with_possible_chapter: String,
             id: u32,
-        ) -> MangaModel {
-            let title_romanized = MangaModel::romanize_title(&title_possibly_in_kanji);
+        ) -> Result<MangaModel, Box<dyn std::error::Error>> {
+            let title_romanized =
+                Self::romanize_title(&Self::trim_quotes(title_possibly_in_kanji.as_str()));
 
             // validate url
-            let url_parsed = match Url::parse(&url_with_possible_chapter) {
-                Ok(validated_url) => validated_url,
-                Err(e) => panic!("Error parsing url: {}", e),
-            };
+            let url_parsed =
+                match Url::parse(&Self::trim_quotes(url_with_possible_chapter.as_str())) {
+                    Ok(validated_url) => Ok(validated_url),
+                    Err(e) => Err(format!(
+                        "Error parsing url ({}): {}",
+                        url_with_possible_chapter, e
+                    )),
+                };
 
-            let (url_as_is, base_url, chapter) = MangaModel::url_and_chapter(url_parsed.clone());
-            #[cfg(debug_assertions)]
-            {
-                println!("# MangaModel::new_from_required_elements: title='{}', url='{}', id='{}'\n\ttitle_romanized='{:?}', url_with_chapter='{:?}', chapter='{:?}'",
-                    title_possibly_in_kanji,
-                    url_with_possible_chapter,
-                    id,
-                    title_romanized,
-                    url_with_possible_chapter,
-                    chapter,
-                );
-            }
+            match url_parsed {
+                Ok(parsed) => {
+                    let (url_as_is, base_url, chapter) = Self::url_and_chapter(parsed);
+                    #[cfg(debug_assertions)]
+                    {
+                        println!("\n# MangaModel::new_from_required_elements: title='{}', url='{}', id='{}'\n\ttitle_romanized='{:?}', url_with_chapter='{:?}', chapter='{:?}'\n",
+                                        title_possibly_in_kanji,
+                                        url_with_possible_chapter,
+                                        id,
+                                        title_romanized,
+                                        url_with_possible_chapter,
+                                        chapter,
+                                    );
+                    }
 
-            MangaModel {
-                id: id,
-                title: title_possibly_in_kanji,
-                title_romanized: title_romanized,
-                url: match base_url {
-                    Some(base_url) => base_url,
-                    None => url_as_is.clone(),
-                },
-                url_with_chapter: Some(url_as_is.clone()),
-                chapter: chapter.clone(),
-                last_update: None,
-                notes: None,
-                tags: Vec::new(), // empty vec[] is same as None
-                my_anime_list: None,
+                    Ok(MangaModel {
+                        id: id,
+                        title: Self::trim_quotes(title_possibly_in_kanji.as_str()),
+                        title_romanized: match title_romanized {
+                            Some(title_romanized) => {
+                                Some(Self::trim_quotes(title_romanized.as_str()))
+                            }
+                            None => None,
+                        },
+                        url: match base_url {
+                            Some(base_url) => Self::trim_quotes(base_url.as_str()),
+                            None => Self::trim_quotes(url_as_is.clone().as_str()),
+                        },
+                        url_with_chapter: Some(Self::trim_quotes(url_as_is.clone().as_str())),
+                        chapter: match chapter.clone() {
+                            Some(chapter) => Some(Self::trim_quotes(chapter.as_str())),
+                            None => None,
+                        },
+                        last_update: None,
+                        notes: None,
+                        tags: Vec::new(), // empty vec[] is same as None
+                        my_anime_list: None,
+                    })
+                }
+                Err(str_err) => Err(str_err.into()),
             }
         }
     }
