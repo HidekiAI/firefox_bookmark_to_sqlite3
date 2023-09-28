@@ -7,10 +7,11 @@ use rusqlite;
 pub mod model_sqlite3_manga {
     use rusqlite::{
         params,
+        ToSql,
         types::{FromSql, FromSqlError},
-        Connection, Result, Row,
+        Connection, Result, Row, Params,
     };
-    use std::{error::Error, f32::consts::E, path::Path};
+    use std::{error::Error, f32::consts::E, path::Path, collections::HashMap};
 
     use crate::model_manga::model_manga::MangaModel;
 
@@ -124,6 +125,85 @@ pub mod model_sqlite3_manga {
 
         Ok(())
     }
+
+    // sql_where_clause - example: "WHERE title LIKE ?1 AND url LIKE ?2"
+    fn select_manga(db_full_paths: &str, sql_where_clause: &str/* , args: &[&str] */) -> Result<Vec<MangaModel>> {
+        let select_stmt =  
+        format!(
+            "SELECT m.id, m.title, m.title_romanized, m.url, m.url_with_chapter, m.chapter, m.last_update, m.notes, m.my_anime_list,
+                    (SELECT GROUP_CONCAT(t.tag, ', ')
+                        FROM manga_to_tags_map AS mt
+                        JOIN tags AS t ON mt.tag_id = t.id
+                        WHERE mt.manga_id = m.id) AS tags
+                FROM manga AS m {} ;", sql_where_clause);
+        match Connection::open(db_full_paths) {
+            Ok(conn) => {
+                match conn.prepare(
+                    select_stmt.as_str(),
+                    )
+                    {
+                        Ok(mut stmt) =>{
+                                    //let args_joined = args.join(",");   // Join the strings with a delimiter (as params)
+                                    //let sql_params = params![&args_joined]; // Now you can use args_joined in params!
+                                    let sql_params = params![]; // Empty
+                                    match stmt.query(sql_params) {
+                                        Ok(mut rows ) => {
+                                            let mut manga_data = Vec::new();
+                                            let mut possible_next_row = match rows.next() {
+                                                Ok(r) => r,
+                                                Err(e) => {
+                                                    println!("ERROR: Failed to get next row: {}", e);
+                                                    None
+                                                }
+                                            };
+                                            while let Some(row) = possible_next_row {
+                                                manga_data.push(MangaModel {
+                                                    id: row.get(0)?,
+                                                    title: row.get(1)?,
+                                                    title_romanized: row.get(2)?,
+                                                    url: row.get(3)?,
+                                                    url_with_chapter: row.get(4)?,
+                                                    chapter: row.get(5)?,
+                                                    last_update: row.get(6)?,
+                                                    notes: row.get(7)?,
+                                                    tags: match row.get::<usize, String>(9) {
+                                                        Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
+                                                        Err(_) => Vec::new(),
+                                                    },
+                                                    my_anime_list: row.get(8)?,
+                                                });
+                                                possible_next_row = match rows.next() {
+                                                    Ok(r) => r,
+                                                    Err(e) => {
+                                                        println!("ERROR: Failed to get next row: {}", e);
+                                                        None
+                                                    }
+                                                };
+                                            }
+                                            Ok(manga_data)
+                                        }
+                                        Err(e) => {
+                                            // most likely, it's because args/parsms are not correct
+                                            println!("ERROR: Failed to query: {}", e);
+                                            Err(e.into())
+                                        }
+                                    }
+
+
+                        }
+                        Err(e) => {
+                            println!("ERROR: Failed to prepare statement: {}", e);
+                            Err(e.into())
+                        }
+                    }
+            } ,
+            Err(e) => {
+                            println!("ERROR: Failed to open dataae '{}' : {}", db_full_paths, e);
+                            Err(e)
+            }
+        }
+    }
+
 
     // Insert MangaModel (without id field, id=0) and associate tags if any, and return new MangaModel with real/valid id
     pub fn insert_manga(db_full_paths: &str, manga_no_id: &MangaModel) -> Result<MangaModel> {
@@ -447,10 +527,10 @@ pub mod model_sqlite3_manga {
                                                     chapter: row.get(5)?,
                                                     last_update: row.get(6)?,
                                                     notes: row.get(7)?,
-                tags: match row.get::<usize, String>(9) {
-                    Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
-                    Err(_) => Vec::new(),
-                },
+                                                    tags: match row.get::<usize, String>(9) {
+                                                        Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
+                                                        Err(_) => Vec::new(),
+                                                    },
                                                     my_anime_list: row.get(8)?,
                                                 });
                                                 possible_next_row = match rows.next() {
@@ -616,7 +696,7 @@ pub mod model_sqlite3_manga {
     }
 
     // return in manga struct based on ID
-    pub fn select_manga(db_full_paths: &str, id: u32) -> Result<MangaModel> {
+    pub fn select_manga_by_id(db_full_paths: &str, id: u32) -> Result<MangaModel> {
         let path = Path::new(db_full_paths);
         let conn = Connection::open(path)?;
 
@@ -1083,6 +1163,23 @@ pub mod model_sqlite3_manga {
             let url = "%"; // Replace with the URL you want to search for
 
             match super::fetch_manga_data2(db_file_path, title, url) {
+                Ok(manga_data) => {
+                    for manga in manga_data {
+                        println!("{}|{}|{}", manga.id, manga.title, manga.url);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Error: {:?}", err);
+                }
+            }
+        }
+
+        #[test]
+        fn test_select_manga() {
+            let db_file_path = "tests/test_select_manga.sqlite3"; // Replace with your actual database file path
+            //let sql_where_clause = format!("WHERE m.url LIKE '{}' AND m.title LIKE '{}'", "%", "%フロンティア%");
+            let sql_where_clause = format!("WHERE m.url LIKE '{}' AND m.title LIKE '{}'", "%", "%");
+            match super::select_manga(db_file_path, sql_where_clause.as_str()) {
                 Ok(manga_data) => {
                     for manga in manga_data {
                         println!("{}|{}|{}", manga.id, manga.title, manga.url);
