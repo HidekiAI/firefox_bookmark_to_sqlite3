@@ -568,7 +568,7 @@ pub mod model_csv_manga {
                         }
                         Err(e) => {
                             println!("Error: could not create MangaModel from CSV record");
-                            return None;    // brute-force bail out immediately here
+                            return None; // brute-force bail out immediately here
                         }
                     };
                 }

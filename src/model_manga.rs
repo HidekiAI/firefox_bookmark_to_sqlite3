@@ -5,6 +5,7 @@ use crc::{Algorithm, Crc, CRC_32_ISCSI};
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
 
 pub mod model_manga {
+    use chrono::format::format;
     use serde::{Deserialize, Serialize};
     use url::Url;
 
@@ -42,14 +43,14 @@ pub mod model_manga {
                 "id: '{}', title: '{}', title_romanized: '{:?}', url: '{}', url_with_chapter: '{:?}', chapter: '{:?}', last_update: '{:?}', notes: '{:?}', tags: '{:?}', my_anime_list: '{:?}'",
                 self.id,
                 self.title,
-                self.title_romanized,
+                match self.title_romanized.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
                 self.url,
-                self.url_with_chapter,
-                self.chapter,
-                self.last_update,
-                self.notes,
+                match self.url_with_chapter.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
+                match self.chapter.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
+                match self.last_update.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
+                match self.notes.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
                 self.tags,
-                self.my_anime_list,
+                match self.my_anime_list.clone() {Some(s) => match s.trim().is_empty() { false => Some(s), true => None}, None => None},
             )
         }
     }
@@ -147,6 +148,25 @@ pub mod model_manga {
         pub data: Vec<MangaModel>,
     }
 
+    // Default implementation of the with_values method that sets validate_url to false
+    impl Default for MangaModel {
+        fn default() -> Self {
+            MangaModel::with_values(
+                0,
+                String::new(),
+                None,
+                String::new(),
+                None,
+                None,
+                None,
+                None,
+                Vec::new(),
+                None,
+                //false, // Set validate_url to false by default
+            )
+        }
+    }
+
     impl MangaModel {
         fn trim_quotes(s: &str) -> String {
             let mut s = s.to_string();
@@ -157,6 +177,16 @@ pub mod model_manga {
                 s.pop();
             }
             s.trim().to_string()
+        }
+        // turn Some("") into None
+        fn make_none(s: Option<String>) -> Option<String> {
+            match s {
+                Some(s) => match Self::trim_quotes(s.as_str()).is_empty() {
+                    false => Some(Self::trim_quotes(s.as_str())),
+                    true => None,
+                },
+                None => None,
+            }
         }
 
         pub fn romanize_title_self(&mut self) {
@@ -187,7 +217,7 @@ pub mod model_manga {
         }
 
         pub fn url_and_chapter(
-            url_parsed: Url,
+            url_parsed: Url, // because Url does not validate if it is empty string, we can assume to_str() will never be empty string
         ) -> (
             String,         /*url_as_is*/
             Option<String>, /*base_url*/
@@ -245,13 +275,13 @@ pub mod model_manga {
                         // return tuple of url_as_is, base_url, and chapter
                         (
                             Self::trim_quotes(url_parsed.as_str()).to_string(), // url_as_is
-                            Some(Self::trim_quotes(base_url.as_str())),         // base_url
-                            Some(Self::trim_quotes(chapter.as_str())),          // chapter
+                            Self::make_none(Some(base_url)),                    // base_url
+                            Self::make_none(Some(chapter)),                     // chapter
                         )
                     } else {
                         (
                             Self::trim_quotes(url_parsed.as_str()).to_string(), // url_as_is
-                            Some(Self::trim_quotes(url_parsed.as_str())),       // base_url
+                            Self::make_none(Some(url_parsed.to_string())),      // base_url
                             None,                                               // chapter
                         )
                     }
@@ -283,7 +313,71 @@ pub mod model_manga {
                 //    chapter,
                 //);
             }
-            (url_as_is, base_url, chapter)
+            (
+                Self::trim_quotes(url_as_is.as_str()),
+                Self::make_none(base_url),
+                Self::make_none(chapter),
+            )
+        }
+
+        // Private constructor that constructs a MangaModel object with default values
+        fn new() -> MangaModel {
+            MangaModel {
+                id: 0,
+                title: String::new(),
+                title_romanized: None,
+                url: String::new(),
+                url_with_chapter: None,
+                chapter: None,
+                last_update: None,
+                notes: None,
+                tags: Vec::new(),
+                my_anime_list: None,
+            }
+        }
+        // Public constructor that constructs a MangaModel object with the given values
+        pub fn with_values(
+            id: u32,
+            title: String,
+            title_romanized: Option<String>,
+            url: String,
+            url_with_chapter: Option<String>,
+            chapter: Option<String>,
+            last_update: Option<String>,
+            notes: Option<String>,
+            tags: Vec<String>,
+            my_anime_list: Option<String>,
+        ) -> MangaModel {
+            // ideally, rather than setting ID=0, use CRC32 of title as ID to make it unique prior to calling this...
+            if title.trim().is_empty() {
+                panic!("title is empty");
+            }
+            if url.trim().is_empty() {
+                panic!("url is empty");
+            }
+            if id == 0 {
+                panic!("id is 0");
+            }
+
+            // validate url passed as string is valid url via url::Url, similar to above tests,
+            // we'll panic if url is invalid
+            let url_parsed = match Url::parse(url.as_str()) {
+                Ok(validated_url) => validated_url,
+                Err(e) => panic!("Error parsing url ({:?}): {:?}", url, e),
+            };
+
+            MangaModel {
+                id: id,       // primary key - either prune or ignore if id is 0
+                title: title, // UTF8 encoded, uniqueness based on this and/or url
+                title_romanized: Self::make_none(title_romanized),
+                url: Self::trim_quotes(url_parsed.as_str()), // validated via url::Url
+                url_with_chapter: Self::make_none(url_with_chapter),
+                chapter: Self::make_none(chapter),
+                last_update: Self::make_none(last_update),
+                notes: Self::make_none(notes),
+                tags: tags,
+                my_anime_list: Self::make_none(my_anime_list),
+            }
         }
 
         // disallow empty title, url, or id; note that id passed is commonly/usually from
@@ -309,7 +403,9 @@ pub mod model_manga {
 
             match url_parsed {
                 Ok(parsed) => {
-                    let (url_as_is, base_url, chapter) = Self::url_and_chapter(parsed);
+                    // NOTE: url_and_chapter() trims, removes quotes, and makes Some("") to None
+                    let (url_as_is, possible_base_url, possible_chapter) =
+                        Self::url_and_chapter(parsed);
                     #[cfg(debug_assertions)]
                     {
                         println!("\n# MangaModel::new_from_required_elements: title='{}', url='{}', id='{}'\n\ttitle_romanized='{:?}', url_with_chapter='{:?}', chapter='{:?}'\n",
@@ -318,33 +414,29 @@ pub mod model_manga {
                                         id,
                                         title_romanized,
                                         url_with_possible_chapter,
-                                        chapter,
+                                        possible_chapter,
                                     );
                     }
 
-                    Ok(MangaModel {
-                        id: id,
-                        title: Self::trim_quotes(title_possibly_in_kanji.as_str()),
-                        title_romanized: match title_romanized {
-                            Some(title_romanized) => {
-                                Some(Self::trim_quotes(title_romanized.as_str()))
-                            }
+                    Ok(Self::with_values(
+                        id,
+                        Self::trim_quotes(title_possibly_in_kanji.as_str()),
+                        match title_romanized {
+                            Some(title_romanized) => Self::make_none(Some(title_romanized)),
                             None => None,
                         },
-                        url: match base_url {
-                            Some(base_url) => Self::trim_quotes(base_url.as_str()),
-                            None => Self::trim_quotes(url_as_is.clone().as_str()),
+                        // assume possible_base_url is trimmed, quotes removed, and Some("") is None
+                        match possible_base_url {
+                            Some(base_url) => base_url,
+                            None => url_as_is.clone(),
                         },
-                        url_with_chapter: Some(Self::trim_quotes(url_as_is.clone().as_str())),
-                        chapter: match chapter.clone() {
-                            Some(chapter) => Some(Self::trim_quotes(chapter.as_str())),
-                            None => None,
-                        },
-                        last_update: None,
-                        notes: None,
-                        tags: Vec::new(), // empty vec[] is same as None
-                        my_anime_list: None,
-                    })
+                        Self::make_none(Some(url_as_is.clone())),
+                        possible_chapter.clone(), // assume possible_chapter is trimmed, quotes removed, and Some("") is None
+                        None,
+                        None,
+                        Vec::new(), // empty vec[] is same as None
+                        None,
+                    ))
                 }
                 Err(str_err) => Err(str_err.into()),
             }

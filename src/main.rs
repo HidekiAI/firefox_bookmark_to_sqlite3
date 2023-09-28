@@ -346,8 +346,21 @@ mod json_to_csv {
             String::from("-c"),
             String::from("/dev/shm/current_list.csv"),
             String::from("-d"),
-            String::from("/dev/shm/manga.db"),
+            String::from("/dev/shm/parse_args.sqlite3"),
         ];
+
+        // prior to entering the test, we want to make sure db file exists because parse_args() will ASSUME that it exists
+        let db_full_paths = String::from("/dev/shm/parse_args.sqlite3");
+        if !std::path::Path::new(&db_full_paths).exists() {
+            // create it
+            match model_sqlite3_manga::model_sqlite3_manga::create_tables(&db_full_paths) {
+                Ok(_) => {}
+                Err(e) => {
+                    panic!("Error creating DB file: {}", e);
+                }
+            }
+        }
+
         match parse_args(args) {
             Ok((_db_full_paths, _input, mut output, _possible_mangas)) => {
                 // clean up and close
@@ -359,7 +372,12 @@ mod json_to_csv {
         }
 
         // read test JSON files and attempt to deserialize it
-        let args = vec![String::from("-i"), String::from("tests/input.json")];
+        let args = vec![
+            String::from("-i"),
+            String::from("tests/input.json"),
+            String::from("-d"),
+            String::from("/dev/shm/parse_args.sqlite3"),
+        ];
         match parse_args(args) {
             Ok((db_paths, input, mut output, _possible_mangas)) => {
                 // deserialize - from_reader() method needs to access io::Read::bytes() method
@@ -635,19 +653,19 @@ fn main() {
     }
 
     // add a MARKER to indicate that this is the end of the unique list and what are to follow are duplicates
-    let mut marker_manga = MangaModel {
+    let mut marker_manga = MangaModel::with_values(
         // there is NO WAY MangaModel::new_from_required_elements will pass without valid URL, so we'll hand-craft it here
-        id: 0,
-        title: String::from("MARKER"),
-        title_romanized: None,
-        url: String::from("MARKER"),
-        url_with_chapter: None,
-        chapter: None,
-        last_update: None,
-        notes: None,
-        tags: vec![],
-        my_anime_list: None,
-    };
+        0,
+        String::from("MARKER"),
+        None,
+        String::from("MARKER"),
+        None,
+        None,
+        None,
+        None,
+        vec![],
+        None,
+    );
     mut_csv_writer.record(&mut marker_manga);
 
     // url_map and romaji_title_map are basically bookmarks that needs to be narrowed down to
