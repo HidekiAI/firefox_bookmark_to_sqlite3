@@ -1,5 +1,3 @@
-use crate::model_manga;
-
 //extern crate serde_derive;
 // data model (schema) for json serde
 pub mod model_json_mozilla_bookmarks {
@@ -180,8 +178,8 @@ pub mod model_json_mozilla_bookmarks {
 
             let title = self.title.clone();
             match MangaModel::new_from_required_elements(
-                title.clone(),
-                self.uri(),
+                title.clone().as_str(),
+                self.uri().as_str(),
                 model_manga::CASTAGNOLI.checksum(title.clone().as_bytes()),
             ) {
                 Ok(manga) => Some(manga),

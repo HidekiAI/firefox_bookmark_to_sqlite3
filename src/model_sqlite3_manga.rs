@@ -13,7 +13,10 @@ pub mod model_sqlite3_manga {
     };
     use std::{collections::HashMap, error::Error, f32::consts::E, path::Path};
 
-    use crate::model_manga::model_manga::MangaModel;
+    use crate::{
+        model_manga::model_manga::MangaModel,
+        my_utils::{make_none_if_empty, trim_quotes},
+    };
 
     // NOTE: Unlike CSV and JSON, because SQLite3 is not meant as serde, we do not need
     // to define data-model (schema) for SQLite3, and we'll directly use the model_manga_no_id::MangaModel
@@ -60,6 +63,7 @@ pub mod model_sqlite3_manga {
     // the above will insert 'jovial' into vocabulary table if it doesn't exist, and if it does exist, it will increment the count by 1
 
     fn create_manga_table(db_full_paths: &str) -> Result<()> {
+        println!(">> create_manga_table('{}')", db_full_paths);
         let path = Path::new(db_full_paths);
         let conn = Connection::open(path)?;
 
@@ -85,6 +89,8 @@ pub mod model_sqlite3_manga {
 
     // table wich has foreign key to manga table and tags table, and is the intermediary table
     fn create_manga_to_tags_map_table(db_full_paths: &str) -> Result<()> {
+        println!(">> create_manga_to_tags_map_table('{}')", db_full_paths);
+
         let path = Path::new(db_full_paths);
         let conn = Connection::open(path)?;
 
@@ -103,6 +109,8 @@ pub mod model_sqlite3_manga {
     }
 
     fn create_tags_table(db_full_paths: &str) -> Result<()> {
+        println!(">> create_tags_table('{}')", db_full_paths);
+
         let path = Path::new(db_full_paths);
         let conn = Connection::open(path)?;
 
@@ -119,6 +127,7 @@ pub mod model_sqlite3_manga {
     }
 
     pub fn create_tables(db_full_paths: &str) -> Result<()> {
+        println!("> create_tables('{}')", db_full_paths);
         create_manga_table(db_full_paths)?;
         create_manga_to_tags_map_table(db_full_paths)?;
         create_tags_table(db_full_paths)?;
@@ -156,22 +165,35 @@ pub mod model_sqlite3_manga {
                                         None
                                     }
                                 };
-                                while let Some(row) = possible_next_row {
-                                    manga_data.push(MangaModel::with_values(
+                                let transform_column = |col: Result<Option<String>, rusqlite::Error> | -> Result<Option<String>> {
+                                    match col {
+                                        Ok(Some(t)) => Ok(make_none_if_empty( Some(t))),
+                                        Ok(None) => Ok(None),
+                                        Err(e) => {
+                                            println!("ERROR: Failed to get column: {}", e);
+                                            Err(e)
+                                        }
+                                    }
+                                } ;
+                                let transform_row = |row: &Row| -> Result<MangaModel> {
+                                    Ok(MangaModel::with_values(
                                         row.get(0)?,
                                         row.get(1)?,
-                                        row.get(2)?,
+                                        transform_column(row.get(2))?,
                                         row.get(3)?,
-                                        row.get(4)?,
-                                        row.get(5)?,
-                                        row.get(6)?,
-                                        row.get(7)?,
+                                        transform_column(row.get(4))?,
+                                        transform_column(row.get(5))?,
+                                        transform_column(row.get(6))?,
+                                        transform_column(row.get(7))?,
                                         match row.get::<usize, String>(9) {
                                             Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
                                             Err(_) => Vec::new(),
                                         },
-                                        row.get(8)?,
-                                    ));
+                                        transform_column(row.get(8))?,
+                                    ))
+                                };
+                                while let Some(row) = possible_next_row {
+                                    manga_data.push(transform_row(&row)?);
                                     possible_next_row = match rows.next() {
                                         Ok(r) => r,
                                         Err(e) => {
@@ -218,34 +240,34 @@ pub mod model_sqlite3_manga {
         conn.execute(
             "INSERT INTO manga (title, title_romanized, url, url_with_chapter, chapter, last_update, notes, tags, my_anime_list) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             &[
-                &manga_no_id.title,
-                match &manga_no_id.title_romanized { Some(t) => t, None => ""   }, 
-                &manga_no_id.url ,
-                match &manga_no_id.url_with_chapter { Some(t) => t, None => ""   },
-                match &manga_no_id.chapter { Some(t) => t, None => ""   },
-                match &manga_no_id.last_update { Some(t) => t, None => ""   },
-                match &manga_no_id.notes { Some(t) => t, None => ""   },
-                &manga_no_id.tags.join(","), 
-                match &manga_no_id.my_anime_list { Some(t) => t, None => ""   },
+                &manga_no_id.title(),
+                match &manga_no_id.title_romanized() { Some(t) => &t.as_str(), None => ""   }, 
+                &manga_no_id.url (),
+                match &manga_no_id.url_with_chapter (){ Some(t) => &t.as_str(), None => ""   },
+                match &manga_no_id.chapter() { Some(t) => &t.as_str(), None => ""   },
+                match &manga_no_id.last_update() { Some(t) => &t.as_str(), None => ""   },
+                match &manga_no_id.notes() { Some(t) => &t.as_str(), None => ""   },
+                &manga_no_id.tags().join(","), 
+                match &manga_no_id.my_anime_list (){ Some(t) => &t.as_str(), None => ""   },
                 ],
         )?; //bail on error
 
         // update MangaModel with the id
         let id = conn.last_insert_rowid() as u32;
         let mut manga = manga_no_id.clone();
-        manga.id = id;
+        manga.set_id(id);
 
         #[cfg(debug_assertions)]
         {
             println!("> INSERT succeeded, new ID: {}", id);
         }
         // second, insert tags if any
-        if manga.tags.len() > 0 {
+        if manga.tags().len() > 0 {
             #[cfg(debug_assertions)]
             {
-                println!("> INSERT tags: {:?}", manga.tags);
+                println!("> INSERT tags: {:?}", manga.tags());
             }
-            for tag in manga.tags.clone() {
+            for tag in manga.tags().clone() {
                 // insert tag if not exists (case insensitive)
                 conn.execute("INSERT OR IGNORE INTO tags (tag) VALUES (?1)", &[&tag])?;
                 // get tag id
@@ -275,7 +297,7 @@ pub mod model_sqlite3_manga {
         {
             println!(
                 ">> INSERT tags '{}' succeeded for ID: {}",
-                manga.tags.join(";"),
+                manga.tags().join(";"),
                 id
             );
         }
@@ -287,7 +309,8 @@ pub mod model_sqlite3_manga {
     pub fn update_manga(
         db_full_paths: &str,
         manga: &MangaModel,
-    ) -> Result<(), Box<dyn std::error::Error + 'static>> {
+        //) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(debug_assertions)]
         {
             println!(
@@ -296,7 +319,7 @@ pub mod model_sqlite3_manga {
             )
         }
         // fail if id (u32) is 0
-        if manga.id == 0 {
+        if manga.id() == 0 {
             return Err("id cannot be 0".into());
         }
 
@@ -306,7 +329,7 @@ pub mod model_sqlite3_manga {
         // if we cannot locate id in manga table during update, return error (most likely got deleted)
         // query for id and title (just in case we need to return the title)
         let mut stmt = conn.prepare("SELECT id FROM manga WHERE id = ?1")?; // returns either 0 or 1 row
-        let manga_iter = stmt.query_map(&[&manga.id], |row| {
+        let manga_iter = stmt.query_map(&[&manga.id()], |row| {
             row.get::<usize, i32>(0) // id is i32 type...
         })?;
         if manga_iter.count() == 0 {
@@ -317,22 +340,22 @@ pub mod model_sqlite3_manga {
         conn.execute(
             "UPDATE manga SET title = ?1, title_romanized = ?2, url = ?3, url_with_chapter = ?4, chapter = ?5, last_update = ?6, notes = ?7, tags = ?8, my_anime_list = ?9 WHERE id = ?10",
             &[
-                &manga.title,
-                match &manga.title_romanized { Some(t) => t, None => ""   }, 
-                &manga.url ,
-                match &manga.url_with_chapter { Some(t) => t, None => ""   },
-                match &manga.chapter { Some(t) => t, None => ""   },
-                match &manga.last_update { Some(t) => t, None => ""   },
-                match &manga.notes { Some(t) => t, None => ""   },
-                &manga.tags.join(","), 
-                match &manga.my_anime_list { Some(t) => t, None => ""   },
-                &manga.id.to_string(),
+                &manga.title(),
+                match &manga.title_romanized() { Some(t) => &t.as_str(), None => ""   }, 
+                &manga.url (),
+                match &manga.url_with_chapter() { Some(t) => &t.as_str(), None => ""   },
+                match &manga.chapter() { Some(t) => &t.as_str(), None => ""   },
+                match &manga.last_update() { Some(t) => &t.as_str(), None => ""   },
+                match &manga.notes() { Some(t) => &t.as_str(), None => ""   },
+                &manga.tags().join(","), 
+                match &manga.my_anime_list() { Some(t) => &t.as_str(), None => ""   },
+                &manga.id().to_string(),
                 ],
         )?;
 
         #[cfg(debug_assertions)]
         {
-            println!("> UPDATE succeeded for ID: {}", manga.id);
+            println!("> UPDATE succeeded for ID: {}", manga.id());
         }
         Ok(())
     }
@@ -348,8 +371,8 @@ pub mod model_sqlite3_manga {
         // first, check if title+url unique exists and if so, update rather than insert
         let manga = match select_manga_from_url_and_title(
             db_full_paths,
-            &manga_no_id.url,
-            &manga_no_id.title,
+            &manga_no_id.url(),
+            &manga_no_id.title(),
         ) {
             Ok(found_model) => {
                 #[cfg(debug_assertions)]
@@ -357,7 +380,7 @@ pub mod model_sqlite3_manga {
                     println!("> upsert_manga: found_model: {:?}", found_model);
                 }
                 // because we're using exact title and url, we should only get 1 row
-                if (found_model.len() > 1) {
+                if found_model.len() > 1 {
                     // if here, it means we got more than 1 row, which is not good, so return error
                     return Err(rusqlite::Error::InvalidParameterName(
                         "more than 1 row found".to_string(),
@@ -368,7 +391,7 @@ pub mod model_sqlite3_manga {
 
                 // row exists, use the ID from the found row and use the data of what was passed
                 let mut manga = manga_no_id.clone();
-                manga.id = top_row.id;
+                manga.set_id(top_row.id());
 
                 // if here, it means we found manga based on title and url, so update it
                 match update_manga(db_full_paths, &manga) {
@@ -390,7 +413,7 @@ pub mod model_sqlite3_manga {
                     rusqlite::Error::QueryReturnedNoRows => {
                         #[cfg(debug_assertions)]
                         {
-                            println!("# SELECT returned 0 rows while searching for title='{}'+url='{}'; inserting instead", manga_no_id.title, manga_no_id.url);
+                            println!("# SELECT returned 0 rows while searching for title='{}'+url='{}'; inserting instead", manga_no_id.title(), manga_no_id.url());
                         }
                         // if here, it means we cannot find manga based on title and url, so insert it
                         insert_manga(db_full_paths, manga_no_id)
@@ -410,6 +433,8 @@ pub mod model_sqlite3_manga {
 
     // delete the row based on id field
     pub fn delete_manga(db_full_paths: &str, id: u32) -> Result<bool> {
+        println!("DELETE: delete_manga('{}', {})", db_full_paths, id);
+
         let path = Path::new(db_full_paths);
         let conn = Connection::open(path)?;
 
@@ -421,14 +446,42 @@ pub mod model_sqlite3_manga {
             row.get::<usize, i32>(0) // id is i32 type...
         })?;
         if manga_iter.count() == 0 {
+            #[cfg(debug_assertions)]
+            {}
             return Ok(false); // just bail out with a warning...
         }
 
         // if here, id existed, so proceed with delete
-        conn.execute("DELETE FROM manga WHERE id = ?1", &[&id])?;
-
-        // also prune tags group table (again, if cannot find, it's OK)
-        conn.execute("DELETE FROM manga_to_tags_map WHERE manga_id = ?1", &[&id])?;
+        match conn.execute("DELETE FROM manga WHERE id = ?1", &[&id]) {
+            Ok(_) => {
+                // delete tags ONLY if we were able to delete from manga table
+                // also prune tags group table (again, if cannot find, it's OK)
+                match conn.execute("DELETE FROM manga_to_tags_map WHERE manga_id = ?1", &[&id]) {
+                    Ok(_) => {
+                        println!("> DELETE succeeded for ID={}", id);
+                    }
+                    Err(e) => {
+                        // if no rows were found in tags map table, it should still be considered as a success
+                        if e != rusqlite::Error::QueryReturnedNoRows {
+                            println!( "ERROR: delete_manga(id={}): failed deleting from manga_to_tags_map: {}", id, e);
+                            return Err(e.into());
+                        } else {
+                            println!(
+                                "> DELETE succeeded for ID={} (no tags mapping found for this ID)",
+                                id
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!(
+                    "ERROR: delete_manga(id={}): failed deleting from manga: {}",
+                    id, e
+                );
+                return Err(e.into());
+            }
+        }
 
         Ok(true)
     }
@@ -544,121 +597,16 @@ pub mod model_sqlite3_manga {
         }
     }
 
-    //fn fetch_manga_data(db_file_path: &str, title: &str, url: &str) -> Result<Vec<MangaModel>> {
-    //    let conn = Connection::open(db_file_path)?;
-
-    //    let mut stmt = conn.prepare(
-    //        "SELECT m.id, m.title, m.title_romanized, m.url, m.url_with_chapter, m.chapter, m.last_update, m.notes, m.my_anime_list,
-    //                (SELECT GROUP_CONCAT(t.tag, ', ')
-    //                    FROM manga_to_tags_map AS mt
-    //                    JOIN tags AS t ON mt.tag_id = t.id
-    //                    WHERE mt.manga_id = m.id) AS tags
-    //            FROM manga AS m
-    //            WHERE m.title LIKE ?1
-    //            AND m.url LIKE ?2;",
-    //    )?;
-
-    //    let mut rows = stmt.query(params![title, url])?;
-
-    //    let mut manga_data = Vec::new();
-    //    while let Some(row) = rows.next()? {
-    //        manga_data.push(MangaModel {
-    //            id: row.get(0)?,
-    //            title: row.get(1)?,
-    //            title_romanized: row.get(2)?,
-    //            url: row.get(3)?,
-    //            url_with_chapter: row.get(4)?,
-    //            chapter: row.get(5)?,
-    //            last_update: row.get(6)?,
-    //            notes: row.get(7)?,
-    //            tags: match row.get::<usize, String>(9) {
-    //                Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
-    //                Err(_) => Vec::new(),
-    //            },
-    //            my_anime_list: row.get(8)?,
-    //        });
+    // locate titles that are in JA_JP and see if it can find rows that have same URL but title is in
+    // romanized or EN_US; and if so, drop/delete the EN_US row and report that it's removed it
+    // from the database
+    //    pub fn prune_duplicates(db_full_paths: &str) -> Result<Vec<MangaModel>> // returns lists of deleted rows
+    //    {
+    //        // for each rows that has title in JA_JP, locate rows (manga.id) which has same BASE url or romanized title
+    //        // and map manga_id to manga_ids (i.e. single ID mapped to 1 or more IDs)
+    //
     //    }
 
-    //    Ok(manga_data)
-    //}
-
-    //pub fn fetch_manga_data2(
-    //    db_full_paths: &str,
-    //    title: &str,
-    //    url: &str,
-    //) -> Result<Vec<MangaModel>> {
-    //    match Connection::open(db_full_paths) {
-    //        Ok(conn) => {
-    //            match conn.prepare(
-    //                    "SELECT m.id, m.title, m.title_romanized, m.url, m.url_with_chapter, m.chapter, m.last_update, m.notes, m.my_anime_list,
-    //                            (SELECT GROUP_CONCAT(t.tag, ', ')
-    //                                FROM manga_to_tags_map AS mt
-    //                                JOIN tags AS t ON mt.tag_id = t.id
-    //                                WHERE mt.manga_id = m.id) AS tags
-    //                        FROM manga AS m
-    //                        WHERE m.title LIKE ?1
-    //                        AND m.url LIKE ?2;",
-    //                )
-    //                {
-    //                    Ok(mut stmt) =>{
-
-    //                                match stmt.query(params![title, url]){
-    //                                    Ok(mut rows ) => {
-    //                                        let mut manga_data = Vec::new();
-    //                                        let mut possible_next_row = match rows.next() {
-    //                                            Ok(r) => r,
-    //                                            Err(e) => {
-    //                                                println!("ERROR: Failed to get next row: {}", e);
-    //                                                None
-    //                                            }
-    //                                        };
-    //                                        while let Some(row) = possible_next_row {
-    //                                            manga_data.push(MangaModel {
-    //                                                id: row.get(0)?,
-    //                                                title: row.get(1)?,
-    //                                                title_romanized: row.get(2)?,
-    //                                                url: row.get(3)?,
-    //                                                url_with_chapter: row.get(4)?,
-    //                                                chapter: row.get(5)?,
-    //                                                last_update: row.get(6)?,
-    //                                                notes: row.get(7)?,
-    //                                                tags: match row.get::<usize, String>(9) {
-    //                                                    Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
-    //                                                    Err(_) => Vec::new(),
-    //                                                },
-    //                                                my_anime_list: row.get(8)?,
-    //                                            });
-    //                                            possible_next_row = match rows.next() {
-    //                                                Ok(r) => r,
-    //                                                Err(e) => {
-    //                                                    println!("ERROR: Failed to get next row: {}", e);
-    //                                                    None
-    //                                                }
-    //                                            };
-    //                                        }
-    //                                        Ok(manga_data)
-    //                                    }
-    //                                    Err(e) => {
-    //                                        println!("ERROR: Failed to query: {}", e);
-    //                                        Err(e)
-    //                                    }
-    //                                }
-
-    //                    }
-    //                    Err(e) => {
-    //                        println!("ERROR: Failed to prepare statement: {}", e);
-    //                        Err(e)
-    //                    }
-    //                }
-
-    //        } ,
-    //        Err(e) => {
-    //                        println!("ERROR: Failed to open dataae '{}' : {}", db_full_paths, e);
-    //                        Err(e)
-    //        }
-    //    }
-    //}
-    // unit-test modules
     #[cfg(test)]
     mod tests {
         use crate::model_manga::{self, model_manga::MangaModel};
@@ -667,8 +615,8 @@ pub mod model_sqlite3_manga {
 
         fn make_sample_row() -> MangaModel {
             let model = MangaModel::new_from_required_elements(
-                K_MANGA_TITLE.to_string(),
-                K_MANGA_URL_WITH_CHAPTERS.to_string(),
+                K_MANGA_TITLE,
+                K_MANGA_URL_WITH_CHAPTERS,
                 model_manga::CASTAGNOLI.checksum(K_MANGA_TITLE.as_bytes()),
             )
             .unwrap(); // just unwrap(), in unit-test, we make assumptions that it will always succeed
@@ -732,46 +680,46 @@ pub mod model_sqlite3_manga {
 
             let manga_vec = super::select_all_manga(db_full_paths).unwrap();
             for m in manga_vec {
-                println!("test_insert_manga(id={}): {:?}", m.id, m);
+                println!("test_insert_manga(id={}): {:?}", m.id(), m);
                 //println!("manga: {}|{}|{}|{:?}", m.id, m.title, m.url, m.title_romanized);
 
                 // make sure we do NOT have any parsing issue of Some("") -> should be None
-                if m.title_romanized.is_some() {
+                if m.title_romanized().is_some() {
                     // fail if title_romanized is Some("")
-                    assert!(!m.title_romanized.clone().unwrap().is_empty());
+                    assert!(!m.title_romanized().clone().unwrap().is_empty());
                 }
-                if m.url_with_chapter.is_some() {
+                if m.url_with_chapter().is_some() {
                     // fail if url_with_chapter is Some("")
-                    assert!(!m.url_with_chapter.clone().unwrap().is_empty());
+                    assert!(!m.url_with_chapter().clone().unwrap().is_empty());
                 }
-                if m.chapter.is_some() {
+                if m.chapter().is_some() {
                     // fail if chapter is Some("")
-                    assert!(!m.chapter.clone().unwrap().is_empty());
+                    assert!(!m.chapter().clone().unwrap().is_empty());
                 }
-                if m.last_update.is_some() {
+                if m.last_update().is_some() {
                     // fail if last_update is Some("")
-                    assert!(!m.last_update.clone().unwrap().is_empty());
+                    assert!(!m.last_update().clone().unwrap().is_empty());
                 }
-                if m.notes.is_some() {
+                if m.notes().is_some() {
                     // fail if notes is Some("")
-                    assert!(!m.notes.clone().unwrap().is_empty());
+                    assert!(!m.notes().clone().unwrap().is_empty());
                 }
-                if m.my_anime_list.is_some() {
+                if m.my_anime_list().is_some() {
                     // fail if my_anime_list is Some("")
-                    assert!(!m.my_anime_list.clone().unwrap().is_empty());
+                    assert!(!m.my_anime_list().clone().unwrap().is_empty());
                 }
 
-                if manga_inserted.id == m.id {
-                    assert_eq!(manga_inserted.id, m.id);
-                    assert_eq!(manga_inserted.title, m.title);
-                    assert_eq!(manga_inserted.title_romanized, m.title_romanized);
-                    assert_eq!(manga_inserted.url, m.url);
-                    assert_eq!(manga_inserted.url_with_chapter, m.url_with_chapter);
-                    assert_eq!(manga_inserted.chapter, m.chapter);
-                    assert_eq!(manga_inserted.last_update, m.last_update);
-                    assert_eq!(manga_inserted.notes, m.notes);
-                    assert_eq!(manga_inserted.tags, m.tags);
-                    assert_eq!(manga_inserted.my_anime_list, m.my_anime_list);
+                if manga_inserted.id() == m.id() {
+                    assert_eq!(manga_inserted.id(), m.id());
+                    assert_eq!(manga_inserted.title(), m.title());
+                    assert_eq!(manga_inserted.title_romanized(), m.title_romanized());
+                    assert_eq!(manga_inserted.url(), m.url());
+                    assert_eq!(manga_inserted.url_with_chapter(), m.url_with_chapter());
+                    assert_eq!(manga_inserted.chapter(), m.chapter());
+                    assert_eq!(manga_inserted.last_update(), m.last_update());
+                    assert_eq!(manga_inserted.notes(), m.notes());
+                    assert_eq!(manga_inserted.tags(), m.tags());
+                    assert_eq!(manga_inserted.my_anime_list(), m.my_anime_list());
                 }
             }
 
@@ -805,7 +753,7 @@ pub mod model_sqlite3_manga {
             match super::select_manga(db_file_path, sql_where_clause.as_str()) {
                 Ok(manga_data) => {
                     for manga in manga_data {
-                        println!("{}|{}|{}", manga.id, manga.title, manga.url);
+                        println!("{}|{}|{}", manga.id(), manga.title(), manga.url());
                     }
                 }
                 Err(err) => {

@@ -3,7 +3,7 @@ mod model_json_mozilla_bookmarks;
 mod model_manga; // this is the same as `mod model_json; pub use model_json::*;`
 mod model_sqlite3_manga;
 
-use std::io::{self, BufReader, BufWriter};
+use std::{io::{self, BufReader, BufWriter}, ops::Deref};
 
 use model_csv_manga::model_csv_manga::CsvMangaModel;
 use model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
@@ -31,19 +31,18 @@ mod json_to_csv {
 
     // read existing CSV file and deserialize each row, we'll directly
     // pass/transfer it down to SQLite
-    pub fn read_csv(
-        output_writer: Box<dyn Write>,
+    pub fn read_csv_and_update_sqlite(
         input_reader: Box<dyn std::io::Read>,
         db_full_paths: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // deserialize - from_reader() method needs to access io::Read::bytes() method
-        let mut csv_util =
-            model_csv_manga::model_csv_manga::Utils::new(output_writer, input_reader);
+        let mut csv_util = model_csv_manga::model_csv_manga::Utils::new(None, input_reader);
         // whether table already exists or not, we'll create it in case it does not exist
         let table_created = model_sqlite3_manga::model_sqlite3_manga::create_tables(db_full_paths);
 
         // iterate through each row via csv_util.next() (it will deserialize it to MangaModel) and write it to SQLite
         let mut line_count = 0; // starting with 0, so that if first line returned is None, then we'll know that there is no line to process
+        let mut update_count = 0;
         let mut possible_csv_row = csv_util.next();
 
         // NOTE: we do not return or panic!() inside this while loop, instead we'll
@@ -83,6 +82,7 @@ mod json_to_csv {
                                             upsert_row_returned
                                         )
                                     }
+                                    update_count += 1;
                                 }
                                 Err(insert_or_update_error) => {
                                     // for now, panic!() if it was an error based on unique constraint (because it's a programmer bug rather than actual error)
@@ -128,7 +128,8 @@ mod json_to_csv {
 
         // print some stats on completions (success of fail) of filename and number of rows (lines) processed
         println!("CSV file: {}", db_full_paths);
-        println!("CSV file lines processed: {}", line_count);
+        println!("CSV file lines read: {}", line_count);
+        println!("Rows (lines) upserted: {}", update_count);
         match ret_errors.len() {
             0 => {
                 // special case, when line_count is 0, then we'll return error of "no rows processed"
@@ -162,42 +163,41 @@ mod json_to_csv {
         args: Vec<String>,
     ) -> Result<
         (
-            String,
-            Box<dyn BufRead + 'static>,
-            Box<dyn Write + 'static>,
-            Option<Vec<MangaModel>>,
+            String,                     // SQLite3 database full path
+            Box<dyn BufRead + 'static>, // -i: either stdin or input file-stream of JSON (bookmak) file (NOTE: special case of using 'static)
+            Box<dyn Write + 'static>,   // -o: either stdout or output file-stream of CSV file
         ),
-        String,
+        Box<dyn std::error::Error>,
     > {
         #[cfg(debug_assertions)]
         {
             println!("args: {:?}", args);
         }
-        let mut input_file = false;
-        let mut output_file = false;
-        let mut input_csv_file = false;
-        let mut db_file = false;
-        let mut input = String::new();
-        let mut output = String::new();
-        let mut input_csv = String::new();
+        let mut has_input_file = false;
+        let mut has_output_file = false;
+        let mut has_possible_input_csv_file = false;
+        let mut has_db_file = false;
+        let mut input_filepaths_bookmark_json = String::new();
+        let mut output_filepaths_csv = String::new();
+        let mut possible_last_csv: Option<String> = None;
         let mut db_full_paths = String::new();
         let mut i = 0;
         while i < args.len() {
             println!("arg[{}]: {}", i, args[i]);
             if args[i] == "-i" {
-                input_file = true;
-                input = args[i + 1].clone();
+                has_input_file = true;
+                input_filepaths_bookmark_json = args[i + 1].clone();
                 i += 2; // increment by 2 to skip the next argument
             } else if args[i] == "-o" {
-                output_file = true;
-                output = args[i + 1].clone();
+                has_output_file = true;
+                output_filepaths_csv = args[i + 1].clone();
                 i += 2; // increment by 2 to skip the next argument
             } else if args[i] == "-c" {
-                input_csv_file = true;
-                input_csv = args[i + 1].clone();
+                has_possible_input_csv_file = true;
+                possible_last_csv = Some(args[i + 1].clone());
                 i += 2; // increment by 2 to skip the next argument
             } else if args[i] == "-d" {
-                db_file = true;
+                has_db_file = true;
                 db_full_paths = args[i + 1].clone();
                 i += 2; // increment by 2 to skip the next argument
             } else {
@@ -208,131 +208,132 @@ mod json_to_csv {
             }
         }
 
-        println!("\nInput_file: {} '{}'", input_file, input);
-        println!("Output_file: {} '{}'", output_file, output);
-        println!("Input_csv_file: {} '{}'", input_csv_file, input_csv);
-        println!("DB_file: {} '{}'", db_file, db_full_paths);
+        println!("DB_file (SQLite3): {} '{}'", has_db_file, db_full_paths);
+        println!(
+            "Input_file (bookmark JSON): {} '{}'",
+            has_input_file, input_filepaths_bookmark_json
+        );
+        println!(
+            "Output_file (CSV): {} '{}'",
+            has_output_file, output_filepaths_csv
+        );
+        println!(
+            "Possible Input_csv_file (previously persisted CSV): {} '{:?}'",
+            has_possible_input_csv_file, possible_last_csv
+        );
+        println!("NOTE: If Input_csv_file is optional if SQLite3 is up-to-date, and the CSV is basically human-readable version of SQLite3");
+        println!("If there are conflicts between CSV and SQLite3, then the CSV will take precedence over SQLite3 and updates will be written to SQLite3");
+        println!(
+            "This way, one can hand-edit and update CSV file and then re-import it into SQLite3"
+        );
 
         // first, read all available data and build database from both CSV (i.e. 漫画.csv) and JSON (i.e. bookmark.json)
         // into SQLite3 database 漫画.sqlite3
-        if db_full_paths == "" {
+        if db_full_paths.is_empty() {
             // locate to see if '漫画.csv' exists in current directory
             let mut db_full_paths = String::from("漫画.sqlite3");
             if !std::path::Path::new(&db_full_paths).exists() {
-                println!("Error: DB file '{}' does not exist", db_full_paths);
                 // exit application via panic!()
-                panic!("Error: DB file does not exist");
+                panic!("Error: DB file '{}' does not exist", db_full_paths);
             }
         } else {
             // make sure that the DB file exists (accessible)
             if !std::path::Path::new(&db_full_paths).exists() {
-                println!("Error: DB file '{}' does not exist", db_full_paths);
                 // exit application
-                panic!("Error: DB file does not exist");
+                panic!("Error: DB file '{}' does not exist", db_full_paths);
             }
         }
 
         // append/read (deserialize) from input CSV file (if it exists)
-        let mut last_csv_file: Option<Vec<MangaModel>> = None;
-        if input_csv_file {
-            match File::open(&input_csv) {
-                Ok(file) => {
-                    println!("Input CSV file: {}", input_csv);
-                    let input_reader = Box::new(BufReader::new(file)); // NOTE: file is NOT std::io::stdin(), or can  it be?
-                    let mut mangas = Vec::new();
-                    match read_csv(
-                        Box::new(BufWriter::new(io::stdout())),
-                        input_reader,
-                        &db_full_paths,
-                    ) {
-                        Ok(_) => {
-                            // read direct from DB
-                            match model_sqlite3_manga::model_sqlite3_manga::select_all_manga(
-                                &db_full_paths,
+        // note that when deserializing to the SQLite3, we'll just overwrite the existing entry
+        // via upsert() method so ideally, caller should backup the existing database file
+        if has_possible_input_csv_file && possible_last_csv.is_some() {
+            match possible_last_csv {
+                Some(last_csv) => {
+                    // make sure that the CSV file exists (accessible)
+                    if !std::path::Path::new(&last_csv).exists() {
+                        // No need to panic, just ignore and use the SQLite3 file
+                        println!("Error: CSV file '{}' does not exist", last_csv);
+                    }
+                    // open stream for csv file
+                    match File::open(last_csv.clone()) {
+                        Ok(input_csv_file) => {
+                            // read CSV file and deserialize each row, we'll directly
+                            // pass/transfer it down to SQLite
+                            match read_csv_and_update_sqlite(
+                                Box::new(input_csv_file),
+                                &db_full_paths.clone(),
                             ) {
-                                Ok(mangas_from_db) => {
-                                    mangas = mangas_from_db;
+                                Ok(()) => {
+                                    // read line and written/updated to sqlite3...
                                 }
                                 Err(e) => {
-                                    println!("Error reading mangas from DB: {}", e);
-                                    return Err(format!("Error reading mangas from DB: {}", e));
+                                    println!(
+                                        "Error reading CSV file '{}' to be updating '{}': {}",
+                                        last_csv, db_full_paths, e
+                                    );
                                 }
                             }
                         }
                         Err(e) => {
-                            println!("Error reading CSV file: {}", e);
-                            return Err(format!("Error reading CSV file: {}", e));
+                            // file doesn't exist, just log error and continue on
+                            println!("Error opening CSV file '{}': {}", last_csv.clone(), e);
                         }
-                    }
-
-                    last_csv_file = Some(mangas);
+                    };
                 }
-                Err(e) => {
-                    // just log that we cannot find it, but it's no big deal (keep last_csv_file=None)
-                    println!("Error opening CSV file '{}': {}", input_csv, e)
-                }
+                None => (), // no-op, assume SQLite3 is up-to-date
             }
         }
 
-        if input_file {
-            match File::open(&input) {
-                Ok(file) => {
-                    println!("Input file: {}", input);
-                    let input_reader = Box::new(BufReader::new(file));
-                    if output_file {
-                        match File::create(&output) {
-                            Ok(file) => {
-                                println!("Output file: {}", output);
-                                let output_writer = Box::new(BufWriter::new(file));
-                                return Ok((
-                                    db_full_paths,
-                                    input_reader,
-                                    output_writer,
-                                    last_csv_file,
-                                ));
-                            }
-                            Err(e) => {
-                                return Err(format!(
-                                    "Error creating output file '{}': {}",
-                                    output, e
-                                ));
-                            }
-                        }
-                    } else {
-                        println!("Output file: stdout");
-                        let output_writer = Box::new(BufWriter::new(io::stdout()));
-                        return Ok((db_full_paths, input_reader, output_writer, last_csv_file));
-                    }
+        // now depending on stdin or firefox bookmark JSON file, we'll create a stream
+        let input_reader_bookmark_json: Box<dyn BufRead + 'static> = if has_input_file {
+            // open stream for input file
+            match File::open(input_filepaths_bookmark_json.clone()) {
+                Ok(input_file) => {
+                    Box::new(BufReader::new(input_file)) as Box<dyn BufRead + 'static>
                 }
                 Err(e) => {
-                    return Err(format!(
-                        "Error opening input file (cwd: {}, input: '{}'): {}",
-                        std::env::current_dir().unwrap().display(),
-                        input,
+                    // file doesn't exist, just log error and continue on
+                    panic!(
+                        "Error opening input file '{}': {}",
+                        input_filepaths_bookmark_json.clone(),
                         e
-                    ));
+                    );
                 }
             }
         } else {
-            println!("Input file: stdin");
-            let input_reader = Box::new(BufReader::new(io::stdin()));
-            if output_file {
-                match File::create(&output) {
-                    Ok(file) => {
-                        println!("Output file: {}", output);
-                        let output_writer = Box::new(BufWriter::new(file));
-                        return Ok((db_full_paths, input_reader, output_writer, last_csv_file));
-                    }
-                    Err(e) => {
-                        return Err(format!("Error creating output file: {}", e));
-                    }
+            // use stdin
+            Box::new(BufReader::new(io::stdin())) as Box<dyn BufRead + 'static>
+        };
+
+        // next, create a stream for CSV output (either csv file or stdout)
+        let output_writer_csv_sqlite: Box<dyn Write + 'static> = if has_output_file {
+            // open stream for output file
+            match File::create(output_filepaths_csv.clone()) {
+                Ok(output_file) => {
+                    Box::new(BufWriter::new(output_file)) as Box<dyn Write + 'static>
                 }
-            } else {
-                println!("Output file: stdout");
-                let output_writer = Box::new(BufWriter::new(io::stdout()));
-                return Ok((db_full_paths, input_reader, output_writer, last_csv_file));
+                Err(e) => {
+                    // file doesn't exist, just log error and continue on
+                    panic!(
+                        "Error opening output file '{}': {}",
+                        output_filepaths_csv.clone(),
+                        e
+                    );
+                }
             }
-        }
+        } else {
+            // use stdout
+            Box::new(BufWriter::new(io::stdout())) as Box<dyn Write + 'static>
+        };
+
+        let ret_tuple = (
+            db_full_paths.clone(),
+            input_reader_bookmark_json, // -i
+            output_writer_csv_sqlite,   // -o
+        );
+
+        Ok(ret_tuple)
     }
 
     #[test]
@@ -362,9 +363,9 @@ mod json_to_csv {
         }
 
         match parse_args(args) {
-            Ok((_db_full_paths, _input, mut output, _possible_mangas)) => {
+            Ok((_db_full_paths, _input_json, mut output_csv)) => {
                 // clean up and close
-                output.flush().unwrap();
+                output_csv.flush().unwrap();
             }
             Err(e) => {
                 panic!("{}", e);
@@ -379,7 +380,7 @@ mod json_to_csv {
             String::from("/dev/shm/parse_args.sqlite3"),
         ];
         match parse_args(args) {
-            Ok((db_paths, input, mut output, _possible_mangas)) => {
+            Ok((db_paths, input_json, mut output_csv)) => {
                 // deserialize - from_reader() method needs to access io::Read::bytes() method
 
                 //// For now, read the whol buffer into memory and pass that on
@@ -399,7 +400,8 @@ mod json_to_csv {
                 //}
                 //println!("\n########################################################");
                 //let bookmark_folders: BookmarkRootFolder = serde_json::from_str(str_buf).unwrap();
-                let bookmark_folders: BookmarkRootFolder = serde_json::from_reader(input).unwrap();
+                let bookmark_folders: BookmarkRootFolder =
+                    serde_json::from_reader(input_json).unwrap();
 
                 // for test, just recursively traverse down each children and print the title and lastModified and the type
                 fn traverse_children(children: &Vec<BookmarkNodes>) {
@@ -418,7 +420,7 @@ mod json_to_csv {
                 traverse_children(bookmark_folders.children());
 
                 // clean up and close
-                output.flush().unwrap();
+                output_csv.flush().unwrap();
             }
             Err(e) => {
                 panic!("{}", e);
@@ -431,10 +433,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // read in JSON either from stdin or file
-    let (db_full_paths, input_reader, output_writer, possible_mangas) =
+    let (db_full_paths, input_reader_bookmark_json, output_writer_csv_sqlite) =
         match json_to_csv::parse_args(args) {
-            Ok((db_full_paths, input_reader, output_writer, possible_mangas)) => {
-                (db_full_paths, input_reader, output_writer, possible_mangas)
+            Ok((db_full_paths, input_reader_json, output_writer_csv)) => {
+                (db_full_paths, input_reader_json, output_writer_csv)
             }
             Err(e) => {
                 println!("{}", e);
@@ -442,25 +444,11 @@ fn main() {
             }
         };
 
-    // read existing CSV file and deserialize each row, we'll directly
-    // pass/transfer it down to SQLite
-    match json_to_csv::read_csv(
-        Box::new(BufWriter::new(io::stdout())),
-        Box::new(BufReader::new(io::stdin())),
-        &db_full_paths,
-    ) {
-        Ok(_) => {}
-        Err(e) => {
-            println!("Error reading CSV file: {}", e);
-            return;
-        }
-    }
-
     // read in JSON and deserialize it as Bookmark structure
     let bookmark_folders: Result<
         model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkRootFolder,
         _,
-    > = serde_json::from_reader(input_reader);
+    > = serde_json::from_reader(input_reader_bookmark_json);
     let bookmarks: Vec<model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::BookmarkNodes> =
         match bookmark_folders {
             Ok(bookmark_folders) => {
@@ -504,16 +492,16 @@ fn main() {
     //    .quote_style(csv::QuoteStyle::Always) // just easier to just quote everything including numbers
     //    .from_writer(output_writer);
     let mut mut_csv_writer = model_csv_manga::model_csv_manga::Utils::new(
-        output_writer,
+        Some(output_writer_csv_sqlite),
         Box::new(BufReader::new(io::stdin())),
     );
-    let mut mangas_mut = possible_mangas.unwrap_or(Vec::new());
+    let mut mangas_mut = Vec::new();
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
         let str_last_modified = CsvMangaModel::from_epoch_to_str(*bookmark.last_modified());
         let mut mm: MangaModel = match MangaModel::new_from_required_elements(
-            bookmark.title().into(),
-            bookmark.uri().clone(),
+            bookmark.title(),
+            bookmark.uri().clone().as_str(),
             model_manga::CASTAGNOLI.checksum(bookmark.uri().clone().as_bytes()),
         ) {
             Ok(mm) => mm,
@@ -522,12 +510,12 @@ fn main() {
                 return;
             }
         };
-        mm.last_update = Some(str_last_modified);
+        mm.set_last_update( Some(str_last_modified));
         mangas_mut.push(mm);
     }
 
     // now that new and old are merged, sort by last_modified and print out the CSV
-    mangas_mut.sort_by(|a, b| a.url.cmp(&b.url));
+    mangas_mut.sort_by(|a, b| a.url().cmp(&b.url()));
 
     // lastly, want to split into 2 files, one that is sorted but unique URL in which
     // if there are duplicates in which one isin JA_JP and another in ROMAJI for title,
@@ -540,33 +528,33 @@ fn main() {
 
     // easiest is to create map (dictionary) based on what will consider as "unique" key
     // We'll create multiple maps, one for each key
-    let mut url_map: std::collections::HashMap<String, Vec<MangaModel>> =
+    let mut url_map: std::collections::HashMap<&str, Vec<MangaModel>> =
         std::collections::HashMap::new();
-    let mut romaji_title_map: std::collections::HashMap<String, Vec<MangaModel>> =
+    let mut romaji_title_map: std::collections::HashMap<&str, Vec<MangaModel>> =
         std::collections::HashMap::new();
     for mut manga_mut in mangas_mut {
         // if URL is empty st, then we'll use the title as the url_with_chapters as fallback
-        let key_url = manga_mut.url.clone();
+        let key_url = manga_mut.url().clone();
         if url_map.contains_key(&key_url) {
             url_map.get_mut(&key_url).unwrap().push(manga_mut.clone());
         } else {
             url_map.insert(key_url, vec![manga_mut.clone()]);
         }
 
-        match manga_mut.title_romanized {
-            Some(ref title_romanized) => {
-                if romaji_title_map.contains_key(&title_romanized.clone()) {
+        match manga_mut.title_romanized() {
+            Some(title_romanized) => {
+                if romaji_title_map.contains_key(title_romanized.as_str()) {
                     romaji_title_map
-                        .get_mut(&title_romanized.clone())
+                        .get_mut(title_romanized.as_str())
                         .unwrap()
                         .push(manga_mut.clone());
                 } else {
-                    romaji_title_map.insert(title_romanized.clone(), vec![manga_mut.clone()]);
+                    romaji_title_map.insert(title_romanized.as_str(), vec![manga_mut.clone()]);
                 }
             }
             None => {
                 // if title_romanized is None, then we'll use the title as the key
-                let key_romaji_title = manga_mut.title.clone();
+                let key_romaji_title = manga_mut.title().clone();
                 if romaji_title_map.contains_key(&key_romaji_title) {
                     romaji_title_map
                         .get_mut(&key_romaji_title)
@@ -582,15 +570,15 @@ fn main() {
     // because maps are auto-sorted by key, there are no sort_by() method, we'll
     // create a new map that has only one entry per key (can do vec, but it's nice to
     // have a list presoted by keys)
-    let mut url_map_unique: std::collections::HashMap<String, MangaModel> =
+    let mut url_map_unique: std::collections::HashMap<&str, MangaModel> =
         std::collections::HashMap::new();
-    let mut romaji_title_map_unique: std::collections::HashMap<String, MangaModel> =
+    let mut romaji_title_map_unique: std::collections::HashMap<&str, MangaModel> =
         std::collections::HashMap::new();
     for (key, mangas) in &url_map {
         // if only one entry, then add to url_map_unique
         if mangas.len() == 1 {
             // since len==1, first() is the only element...
-            url_map_unique.insert(key.into(), mangas.first().unwrap().clone());
+            url_map_unique.insert(key.deref(), mangas.first().unwrap().clone());
         }
     }
     // remove all unique entries from url_map so that we're left with ones that have duplicates
@@ -603,7 +591,7 @@ fn main() {
     for (key, mangas) in &romaji_title_map {
         // if only one entry, then add to romaji_title_map_unique
         if mangas.len() == 1 {
-            romaji_title_map_unique.insert(key.into(), mangas.first().unwrap().clone());
+            romaji_title_map_unique.insert(key.deref(), mangas.first().unwrap().clone());
         }
     }
     // remove unique entries from romaji_title_map
@@ -616,7 +604,7 @@ fn main() {
     // insert it and let the HashMap overwrite the existing entry
     // because of that characteristic nature, it's important that
     // we'd iterate the more important map last
-    let mut merged_unique_map: std::collections::HashMap<String, MangaModel> =
+    let mut merged_unique_map: std::collections::HashMap<&str, MangaModel> =
         std::collections::HashMap::new();
     for (key, manga) in url_map_unique {
         merged_unique_map.insert(key, manga);
@@ -678,9 +666,9 @@ fn main() {
         // elements that does not match the key and add/update it to the mangas list
         for m in mangas.clone() {
             // search if m.url() is found in the URL map...
-            if romaji_title_map.contains_key(&m.url) {
+            if romaji_title_map.contains_key(&m.url()) {
                 // found url as key, move all the elements here into mangas list
-                for m2 in romaji_title_map.get(&m.url).unwrap() {
+                for m2 in romaji_title_map.get(&m.url()).unwrap() {
                     // make sure this CsvMangaModel isn't already in the list
                     if !mangas_for_update.contains(m2) {
                         // not found, add it to the url key
@@ -689,7 +677,7 @@ fn main() {
                 }
 
                 // remove the key from romaji_title_map
-                romaji_title_map.remove(&m.url).unwrap();
+                romaji_title_map.remove(&m.url()).unwrap();
             }
         }
 
@@ -704,11 +692,11 @@ fn main() {
         for m in mangas.clone() {
             // search if m.romanized_title() is found in the URL map...
             // and if so, grabe it, and remove it from url_map
-            match m.title_romanized {
+            match m.title_romanized() {
                 Some(title_romanized) => {
-                    if url_map.contains_key(&title_romanized) {
+                    if url_map.contains_key(title_romanized.as_str()) {
                         // found url as key, move all the elements here into mangas list
-                        for m2 in url_map.get(&title_romanized).unwrap() {
+                        for m2 in url_map.get(title_romanized.as_str()).unwrap() {
                             // make sure this CsvMangaModel isn't already in the list
                             if !mangas_for_update.contains(m2) {
                                 mangas_for_update.push(m2.clone());
@@ -717,14 +705,14 @@ fn main() {
 
                         // remove the key from url_map
                         // probably not needed, but just in case this block is moved/reordered...
-                        url_map.remove(&title_romanized).unwrap();
+                        url_map.remove(title_romanized.as_str()).unwrap();
                     }
                 }
                 None => {
                     // if title_romanized is None, then we'll use the title as the key
-                    if url_map.contains_key(&m.title) {
+                    if url_map.contains_key(&m.title()) {
                         // found url as key, move all the elements here into mangas list
-                        for m2 in url_map.get(&m.title).unwrap() {
+                        for m2 in url_map.get(&m.title()).unwrap() {
                             // make sure this CsvMangaModel isn't already in the list
                             if !mangas_for_update.contains(m2) {
                                 mangas_for_update.push(m2.clone());
@@ -733,7 +721,7 @@ fn main() {
 
                         // remove the key from url_map
                         // probably not needed, but just in case this block is moved/reordered...
-                        url_map.remove(&m.title).unwrap();
+                        url_map.remove(&m.title()).unwrap();
                     }
                 }
             }
@@ -744,7 +732,7 @@ fn main() {
     }
 
     // final sorting by URL
-    merged_duplicates_map.sort_by(|a, b| a.url.cmp(&b.url));
+    merged_duplicates_map.sort_by(|a, b| a.url().cmp(&b.url()));
 
     // now that we've merged the url_map and romaji_title_map, we'll just dump it to the output file
     for manga in merged_duplicates_map {
