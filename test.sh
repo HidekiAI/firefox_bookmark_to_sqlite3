@@ -2,7 +2,7 @@
 
 _PROJ=$(basename $(pwd))
 cargo build
-cargo build --release
+cargo build --release && cp target/release/firefox_bookmark_to_csv .
 echo "########################################## cargo test"
 cargo test
 
