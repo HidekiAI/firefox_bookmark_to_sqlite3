@@ -13,9 +13,8 @@ pub mod model_sqlite3_manga {
     };
     use std::{collections::HashMap, error::Error, f32::consts::E, path::Path};
 
-    use crate::{
-        model_manga::model_manga::MangaModel,
-        my_utils::{make_none_if_empty, trim_quotes},
+    use crate::model_manga::{
+        model_manga::MangaModel, my_utils::make_none_if_empty, my_utils::trim_quotes,
     };
 
     // NOTE: Unlike CSV and JSON, because SQLite3 is not meant as serde, we do not need
@@ -238,7 +237,7 @@ pub mod model_sqlite3_manga {
         // Option based vars needs to become concrete before we can use them in query
         // first, insert MangaModel so that we can get the id
         conn.execute(
-            "INSERT INTO manga (title, title_romanized, url, url_with_chapter, chapter, last_update, notes, tags, my_anime_list) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR IGNORE INTO manga (title, title_romanized, url, url_with_chapter, chapter, last_update, notes, tags, my_anime_list) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             &[
                 &manga_no_id.title(),
                 match &manga_no_id.title_romanized() { Some(t) => &t.as_str(), None => ""   }, 
@@ -351,6 +350,123 @@ pub mod model_sqlite3_manga {
                 match &manga.my_anime_list() { Some(t) => &t.as_str(), None => ""   },
                 &manga.id().to_string(),
                 ],
+        )?;
+
+        #[cfg(debug_assertions)]
+        {
+            println!("> UPDATE succeeded for ID: {}", manga.id());
+        }
+        Ok(())
+    }
+
+    // Scans the chapter field, increments it by 1 (unless it's format is 1-1 or 1.1, then incremnt the tail number by 1)
+    pub fn increment_chapter(manga: &MangaModel) -> (String /*new_chapter*/, String /*new url*/) {
+        let chapter_found = match manga.chapter() {
+            Some(t) => t,
+            None => "0".to_string(), // assume we'd increment from 0 to 1...
+        };
+        // we know what to look for since the chapter field should match the tail number
+        // so we'll just search and replace the last occurence of chapter field with the new chapter number
+        // Chapter="5", URL="https://mangadex.org/5-star-story/", URL_WITH_CHAPTER="https://mangadex.org/5-star-story/5-star-story-chapter-5/"
+        // We need to replace the "chapter-5" to next chapter (6)
+        // Chapter="5.1", URL="https://mangadex.org/5-star-story/", URL_WITH_CHAPTER="https://mangadex.org/5-star-story/5-star-story-chapter-5-1/"
+        // We need to replace the "chapter-5-1" to next chapter (5.2)
+        // locate the last occurence of chapter field in url_with_chapter
+        // first, construct next_chapter so that we can quickly swap it with the last occurence of chapter field in url_with_chapter
+        let next_chapter = if chapter_found.contains(".") || chapter_found.contains("-") {
+            // if here, it means we have a decimal point or a subchapter-separator, so we'll increment the tail number
+            let mut tail_number = chapter_found
+                .split(|c| c == '.' || c == '-')    // I love this split() function, quite flexible (and useful)
+                .collect::<Vec<&str>>() // have: "3.1" -> ["3", "1"], "3-1" -> ["3", "1"]
+                .last() // tail/last element will grab the "1"
+                .unwrap()
+                .parse::<i32>() // make it i32 so that we can just do increment+1
+                .unwrap();
+            tail_number += 1;
+            // now we need to reconstruct the chapter field
+            let mut next_chapter = chapter_found
+                .split(|c| c == '.' || c == '-')    // I love this split() function, quite flexible (and useful)
+                .collect::<Vec<&str>>() // have: "3.2.1" -> ["3", "2", "1"], "3-2-1" -> ["3", "2", "1"]
+                .iter()
+                .take(chapter_found.split(|c| c == '.' || c == '-').count() - 1) // grab all but the last element
+                .map(|s| s.to_string()) // convert &str to String
+                .collect::<Vec<String>>() // have: ["3", "2"]
+                .join("-"); // it could have been either "." or "-", but we'll force it to rejoin with "-" (i.e. ["3", "2"] -> "3-2")
+            // append the tail_number to next_chapter
+            next_chapter.push_str(&format!("-{}", tail_number)); // have: "3-2" -> "3-2-2"
+            next_chapter
+        } else {
+            // if here, it means we have a whole number, so we'll increment the whole number
+            let mut tail_number = chapter_found.parse::<u32>().unwrap();
+            tail_number += 1;
+            tail_number.to_string()
+        };
+
+        // now seeek for the last occurence of chapter field in url_with_chapter and replace it with next_chapter
+        let next_chapter_in_url = match manga.url_with_chapter() {
+            Some(t) => {
+                let mut url_with_chapter = t.clone();
+
+                "".to_string() // TEMP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            }
+            None => {
+                // use BASE url, append "-chapter-1" to it
+                manga.url().to_string() + &next_chapter
+            }
+        };
+        return (next_chapter, next_chapter_in_url);
+    }
+
+    // update the url-with-chapter and chapter fields based on id field
+    pub fn update_url_and_chapter(db_full_paths: &str, manga: &MangaModel) -> Result<()> {
+        #[cfg(debug_assertions)]
+        {
+            println!(
+                "# UPDATE manga: update_url_and_chapter('{}', {:?})",
+                db_full_paths, manga
+            )
+        }
+        // fail if id (u32) is 0
+        if manga.id() == 0 {
+            // opt out early, no use continuing if ID is 0...
+            return Err(rusqlite::Error::InvalidParameterName(
+                "id cannot be 0".to_string(),
+            ));
+        }
+
+        let path = Path::new(db_full_paths);
+        let conn = Connection::open(path)?;
+
+        // if we cannot locate id in manga table during update, return error (most likely got deleted)
+        // query for id and title (just in case we need to return the title)
+        let mut stmt = conn.prepare("SELECT id FROM manga WHERE id = ?1")?; // returns either 0 or 1 row
+        let manga_iter = stmt.query_map(&[&manga.id()], |row| {
+            row.get::<usize, i32>(0) // id is i32 type...
+        })?;
+        if manga_iter.count() == 0 {
+            // no use continuing if no ID was found on the manga table...
+            return Err(rusqlite::Error::InvalidParameterName(
+                "id not found".to_string(),
+            ));
+        }
+
+        // OK, id exists, so proceed with update
+        conn.execute(
+            "UPDATE manga 
+                    SET url_with_chapter = ?1, 
+                        chapter = ?2 
+                    WHERE id = ?3",
+            &[
+                match &manga.url_with_chapter() {
+                    Some(t) => &t.as_str(),
+                    None => "", // we have 2 choices here, either set it to empty string, or set it to base url, but because we want that distinctions of have chapter and have no chapter, we'll set it to empty string, we want to set it to None == ""
+                },
+                match &manga.chapter() {
+                    Some(t) => &t.as_str(),
+                    None => "", // reset to NO chapter
+                },
+                &manga.id().to_string(),
+            ],
         )?;
 
         #[cfg(debug_assertions)]

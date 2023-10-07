@@ -1,11 +1,138 @@
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
+use std::marker::{Send, Sync};
+
+pub mod my_utils {
+    pub trait Flattener<T: Clone> {
+        fn flatten(&self) -> Vec<T>;
+    }
+
+    impl<T: Clone> Flattener<T> for Vec<Option<T>> {
+        fn flatten(&self) -> Vec<T> {
+            self.iter()
+                .filter_map(|opt| opt.as_ref())
+                .cloned()
+                .collect()
+        }
+    }
+
+    // See Vec::into_flatten() in Rust 1.42.0, and slice_flatten() in Rust 1.43.0
+    // https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_flatten
+    // https://doc.rust-lang.org/std/primitive.slice.html#method.flatten
+    // Also, the one I was mostly inteested in, you can use concat() on Vec<Vec<T>> to flatten it
+    //impl<T: Clone> Flattener<T> for Vec<Vec<T>> {
+    //    fn flatten(&self) -> Vec<T> {
+    //        self.iter()
+    //            .flat_map(|inner_vec| inner_vec.iter())
+    //            .cloned()
+    //            .collect()
+    //    }
+    //}
+
+    // NOTE: There is already an Option::flatten() in Rust 1.40.0
+    //impl<T: Clone> Flattener<T> for Option<Option<T>> {
+    //    fn flatten(&self) -> Vec<T> {
+    //        match self {
+    //            Some(inner_opt) => inner_opt.iter().cloned().collect(),
+    //            None => Vec::new(),
+    //        }
+    //    }
+    //}
+
+    // Allow both String and &str to be passed in with magic of AsRef<T> and s.as_ref() combination
+    pub fn trim_quotes<T: AsRef<str>>(s: T) -> String {
+        let s = s.as_ref().trim().trim_end_matches('"').to_string();
+        if s.starts_with('"') || s.ends_with('"') || s.starts_with(' ') || s.ends_with(' ') {
+            trim_quotes(&s[1..s.len() - 1])
+        } else {
+            s.to_string()
+        }
+    }
+    // turn Some("") into None - NOTE: We do NOT want to return `Option<&'static str>` static lifetime, so we return Option<String>
+    pub fn make_none_if_empty<T: AsRef<str>>(s: Option<T>) -> Option<String> {
+        // no need to transform 's' since trim_quotes() will do it for us
+        match s.as_ref() {
+            Some(s) => match trim_quotes(s).is_empty() {
+                false => Some(trim_quotes(s)),
+                true => None,
+            },
+            None => None,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::model_manga::my_utils::make_none_if_empty;
+        use crate::model_manga::my_utils::trim_quotes;
+        use crate::model_manga::my_utils::Flattener;
+
+        #[test]
+        fn test_flatten_vec_option() {
+            let input = vec![Some(1), None, Some(2), None, Some(3)];
+            let expected_output = vec![1, 2, 3];
+            assert_eq!(input.flatten(), expected_output);
+        }
+
+        #[test]
+        fn test_flatten_vec_vec() {
+            let input_as_slices = vec![vec![1, 2], vec![3], vec![], vec![4, 5, 6]];
+            let expected_output = vec![1, 2, 3, 4, 5, 6];
+            // the trivial Vec::concat() way...  Note, in future, when stablized, we can use slice_flatten() here, and ro arrays, Vec.into_flatten()
+            assert_eq!(input_as_slices.concat(), expected_output);
+
+            //// Create a vector of arrays of strings
+            let mut vec = vec![["foo", "bar"], ["baz", "qux"], ["quux", "corge"]];
+
+            // Flatten the vector into a single vector of strings
+            //let flattened = vec.into_flattened();
+
+            // The flattened vector should contain all the strings from the original vector
+            //assert_eq!(flattened, vec!["foo", "bar", "baz", "qux", "quux", "corge"]);
+        }
+
+        #[test]
+        fn test_trim_quotes() {
+            assert_eq!(trim_quotes(""), "");
+            assert_eq!(trim_quotes(" "), "");
+            assert_eq!(trim_quotes(" \" "), "");
+            assert_eq!(trim_quotes(" \"    \" "), "");
+            assert_eq!(trim_quotes(" \" x     \" "), "x");
+            assert_eq!(trim_quotes(" \" x     \" "), "x");
+
+            // tests to make sure it can accept both String and &str
+            let s1 = "  \"Hello\"  ";
+            let s2 = String::from("  \"World\"  ");
+            let trimmed1 = trim_quotes(s1);
+            let trimmed2 = trim_quotes(s2);
+            println!("{}", trimmed1); // prints "Hello"
+            println!("{}", trimmed2); // prints "World"
+        }
+        fn test_make_none() {
+            assert_eq!(make_none_if_empty(Some("")), None);
+            assert_eq!(make_none_if_empty(Some(" ")), None);
+            assert_eq!(make_none_if_empty(Some(" \" ")), None);
+            assert_eq!(make_none_if_empty(Some(" \"    \" ")), None);
+            assert_eq!(
+                make_none_if_empty(Some(" \" x     \" ")),
+                Some("x".to_string())
+            );
+            let s1 = Some("  \"\"  ");
+            let s2 = Some(String::from("  \"Hello\"  "));
+            let none1 = make_none_if_empty(s1.as_deref());
+            let none2 = make_none_if_empty(s2.as_deref());
+            println!("{:?}", none1); // prints "None"
+            println!("{:?}", none2); // prints "Some(\"Hello\")"
+        }
+    }
+}
 
 pub mod model_manga {
-
     use serde::{Deserialize, Serialize};
+    use std::marker::{Send, Sync};
     use url::Url;
 
-    use crate::my_utils::{make_none_if_empty, trim_quotes};
+    use super::my_utils;
+    use my_utils::make_none_if_empty;
+    use my_utils::trim_quotes;
 
     // Create a trait so that we ONLY allow either String or &str generic types
 
@@ -21,16 +148,17 @@ pub mod model_manga {
     // a string with commas to something internally legal, hence there may be
     // cases where we will encounter String that are using UTF8 commas (i.e. "，")
     // instead of ASCII commas (i.e. ",").
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)] // TODO: derive Sync and Send in future
+                                                               //#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Sync, Send)]
     pub struct MangaModel {
         // NOTE: almost (if not) all fields are private, and enforces usage of accessor methods
         // Also, because we do not wish to have it mutate, we probably want it as &str but
         // that would require impl<'a> for MangaModel<'a> and we don't want to do at the moment
         // due to complexities of traits such as clone and display...
-        id: u32,                          // primary key - either prune or ignore if id is 0
-        title: String,                    // UTF8 encoded
-        possible_title_romanized: Option<String>,  // is Some() ONLY if title was in Japanese
-        url: String, // home page of manga (see impl of to_url and from_url validation)
+        id: u32,       // primary key - either prune or ignore if id is 0
+        title: String, // UTF8 encoded
+        possible_title_romanized: Option<String>, // is Some() ONLY if title was in Japanese
+        url: String,   // home page of manga (see impl of to_url and from_url validation)
         possible_url_with_chapter: Option<String>, // last read/updated chapter
         possible_chapter: Option<String>, // last read/updated chapter
         possible_last_update: Option<String>,
@@ -44,57 +172,63 @@ pub mod model_manga {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
             write!(
                 f,
-                "id: '{}', title: '{}', title_romanized: '{:?}', url: '{}', url_with_chapter: '{:?}', chapter: '{:?}', last_update: '{:?}', notes: '{:?}', tags: '{:?}', my_anime_list: '{:?}'",
+                //"id: '{}', title: '{}', title_romanized: '{}', url: '{}', url_with_chapter: '{}', chapter: '{}', last_update: '{}', notes: '{}', tags: '{}', my_anime_list: '{}'",
+                "'{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}'",
                 self.id(),
                 self.title(),
-                match self.title_romanized().clone() {
+                match &self.title_romanized() {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
                 self.url(),
-                match self.possible_url_with_chapter.clone() {
+                match &self.possible_url_with_chapter {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
-                match self.possible_chapter.clone() {
+                match &self.possible_chapter {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
-                match self.possible_last_update.clone() {
+                match &self.possible_last_update {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
-                match self.possible_notes.clone() {
+                match &self.possible_notes {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
-                self.tags.iter().filter_map(|tag| {
-                    match tag.trim().trim_end_matches('"').is_empty() {
-                        false => Some(tag.to_owned()),
-                        true => None
-                    }
-                }).collect::<Vec<String>>(),
-                match self.possible_my_anime_list.clone() {
+                &self
+                    .tags
+                    .iter()
+                    .filter_map(|tag| {
+                        match tag.trim().trim_end_matches('"').is_empty() {
+                            false => Some(tag.clone()),
+                            true => None,
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join(";"),
+                match &self.possible_my_anime_list {
                     Some(s) => match s.trim().trim_end_matches('"').is_empty() {
-                        false => Some(s),
-                        true => None
+                        false => s.as_str(),
+                        true => "",
                     },
-                    None => None
+                    None => "",
                 },
             )
         }
@@ -587,9 +721,20 @@ pub mod model_manga {
         }
     }
 
+    fn is_normal<T: Sized + Send + Sync + Unpin>() {}
+
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        // test to make sure default traits are implemented at compile time
+        fn test_() {
+            is_normal::<MangaModel>();
+        }
+
+        #[test]
+        fn test_default_trait() {}
 
         #[test]
         fn test_manga_model() {

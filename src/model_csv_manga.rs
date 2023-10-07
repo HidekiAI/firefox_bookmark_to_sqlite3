@@ -3,6 +3,7 @@ pub mod model_csv_manga {
     use serde::{Deserialize, Serialize};
     use std::fmt::{self};
     use std::io::Write;
+    use std::ops::Deref;
 
     use crate::model_manga;
     use crate::model_manga::model_manga::MangaModel;

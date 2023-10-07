@@ -1,10 +1,11 @@
+//mod firefox_bookmarks_to_csv;
 mod model_csv_manga;
 mod model_json_mozilla_bookmarks;
 mod model_manga;
 mod model_sqlite3_manga;
 mod text_type; // used by model_manga to make it flexible for different text types
 
-pub mod my_utils {
+pub mod my_libs {
     pub trait Flattener<T: Clone> {
         fn flatten(&self) -> Vec<T>;
     }
@@ -64,9 +65,11 @@ pub mod my_utils {
 
     #[cfg(test)]
     mod tests {
-        use crate::my_utils::{make_none_if_empty, trim_quotes, Flattener};
+        #[allow(dead_code, unused_variables)]
+        use crate::my_libs::{make_none_if_empty, trim_quotes, Flattener};
 
         #[test]
+        #[allow(dead_code, unused_variables)]
         fn test_flatten_vec_option() {
             let input = vec![Some(1), None, Some(2), None, Some(3)];
             let expected_output = vec![1, 2, 3];
@@ -74,14 +77,15 @@ pub mod my_utils {
         }
 
         #[test]
+        #[allow(dead_code, unused_variables)]
         fn test_flatten_vec_vec() {
             let input_as_slices = vec![vec![1, 2], vec![3], vec![], vec![4, 5, 6]];
             let expected_output = vec![1, 2, 3, 4, 5, 6];
-            // the trivial Vec::concat() way...  Note, in future, when stablized, we can use slice_flatten() here, and ro arrays, Vec.into_flatten()  
+            // the trivial Vec::concat() way...  Note, in future, when stablized, we can use slice_flatten() here, and ro arrays, Vec.into_flatten()
             assert_eq!(input_as_slices.concat(), expected_output);
 
             //// Create a vector of arrays of strings
-            let mut vec = vec![["foo", "bar"], ["baz", "qux"], ["quux", "corge"]];
+            let vec = vec![["foo", "bar"], ["baz", "qux"], ["quux", "corge"]];
 
             // Flatten the vector into a single vector of strings
             //let flattened = vec.into_flattened();
@@ -91,6 +95,7 @@ pub mod my_utils {
         }
 
         #[test]
+        #[allow(dead_code, unused_variables)]
         fn test_trim_quotes() {
             assert_eq!(trim_quotes(""), "");
             assert_eq!(trim_quotes(" "), "");
@@ -107,6 +112,7 @@ pub mod my_utils {
             println!("{}", trimmed1); // prints "Hello"
             println!("{}", trimmed2); // prints "World"
         }
+        #[allow(dead_code, unused_variables)]
         fn test_make_none() {
             assert_eq!(make_none_if_empty(Some("")), None);
             assert_eq!(make_none_if_empty(Some(" ")), None);
@@ -126,20 +132,69 @@ pub mod my_utils {
     }
 }
 
-// Some insane syntax of Rust:
-// method_match() and method_if_let() are equivalent:
-//      fn method_match() {
-//          let my_number = Some(42);
-//          match my_number {
-//              Some(ref n) => print_number(n),
-//              None => println!("The number is None"),
-//          }
-//      }
-//      fn method_if_let() {
-//          let my_number = None;
-//          if let Some(ref n) = my_number {
-//              print_number(n);
-//          } else {
-//              println!("The number is None");
-//          }
-//      }
+// Following mod is PRIVATE, it's just some notes for myself of new things I learned in Rust
+// during the progress of THIS project
+mod my_learnt_rust {
+
+    // example of generic lifetime annotations (borrow checker)
+    // sample assures lifetime of return value is same as lifetime of input parameters
+    #[allow(dead_code, unused_variables)]
+    fn lifetime_examples<'input_output_lifetime>(
+        x: &'input_output_lifetime str,
+        y: &'input_output_lifetime str,
+    ) -> &'input_output_lifetime str {
+        if x.is_empty() {
+            x
+        } else if y.is_empty() {
+            y
+        } else {
+            if x.len() > y.len() {
+                x
+            } else {
+                y
+            }
+        }
+    }
+
+    // Some insane syntax of Rust:
+    // 2 pattern-matching methods below: method_match() and method_if_let() are equivalent (match vs if/else):
+    #[allow(dead_code)]
+    fn method_match() {
+        let print_number = |n: &i32| println!("The number is {}", n);
+        let my_number = Some(42);
+        match my_number {
+            Some(ref n) => print_number(n),
+            None => println!("The number is None"),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn method_if_let() {
+        let print_number = |n: &i32| println!("The number is {}", n);
+        let my_number = None;
+        // NOTE: the 'let' statement below is '=', not '=='
+        if let Some(ref n) = my_number {
+            print_number(n);
+        } else {
+            println!("The number is None");
+        }
+    }
+
+    // example of passing as mutable reference vesu passed by value and marked as mutable
+    #[allow(dead_code, unused_variables)]
+    fn prune_romaji_map_by_mutable_ref<'a>(
+        romaji_title_map_mut: &mut std::collections::HashMap<String, Vec<i32>>,
+        url_map_mut: std::collections::HashMap<String, Vec<i32>>,
+        merged_duplicates_map: &mut Vec<i32>,
+    ) -> Vec<i32> {
+        todo!("")
+    }
+    #[allow(dead_code, unused_variables, unused_mut)]
+    fn prune_romaji_map_by_value_as_mutable<'a>(
+        mut romaji_title_map_mut: std::collections::HashMap<String, Vec<i32>>,
+        url_map_mut: std::collections::HashMap<String, Vec<i32>>,
+        mut merged_duplicates_map: Vec<i32>,
+    ) -> Vec<i32> {
+        todo!("")
+    }
+}
