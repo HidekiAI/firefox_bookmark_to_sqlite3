@@ -25,7 +25,7 @@ mod json_to_csv {
     use crate::{
         model_csv_manga,
         model_manga::model_manga::MangaModel,
-        model_sqlite3_manga, model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{BookmarkRootFolder, BookmarkNodes},
+        model_sqlite3_manga,
     };
 
     pub fn upsert_db(
@@ -444,7 +444,7 @@ mod json_to_csv {
             String::from("/dev/shm/parse_args.sqlite3"),
         ];
         match parse_args(args) {
-            Ok((db_paths, input_json, mut output_csv, _)) => {
+            Ok((_db_paths, input_json, mut output_csv, _)) => {
                 // deserialize - from_reader() method needs to access io::Read::bytes() method
 
                 //// For now, read the whol buffer into memory and pass that on
