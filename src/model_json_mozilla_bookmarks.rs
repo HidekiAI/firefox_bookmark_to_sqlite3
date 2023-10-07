@@ -267,7 +267,7 @@ pub mod model_json_mozilla_bookmarks {
         use std::{fs::File, io::BufReader};
 
         use super::*;
-        use serde_json::json;
+        
         #[test]
         fn test_serialize_firefox_bookmark() {
             let json_data = r#"

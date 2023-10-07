@@ -3,16 +3,16 @@ mod model_json_mozilla_bookmarks;
 mod model_manga; // this is the same as `mod model_json; pub use model_json::*;`
 mod model_sqlite3_manga;
 
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufRead, BufReader, Write};
 
 use firefox_bookmark_to_csv::my_libs;
 use json_to_csv::upsert_db;
-use model_csv_manga::model_csv_manga::CsvMangaModel;
+
 use model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
-    BookmarkNodes, BookmarkRootFolder, Type,
+    BookmarkNodes, BookmarkRootFolder,
 };
 use model_manga::model_manga::MangaModel;
-use model_sqlite3_manga::model_sqlite3_manga::*;
+
 
 mod json_to_csv {
     //use serde_json::Value;
@@ -24,11 +24,8 @@ mod json_to_csv {
 
     use crate::{
         model_csv_manga,
-        model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
-            BookmarkNodes, BookmarkRootFolder,
-        },
         model_manga::model_manga::MangaModel,
-        model_sqlite3_manga,
+        model_sqlite3_manga, model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{BookmarkRootFolder, BookmarkNodes},
     };
 
     pub fn upsert_db(
@@ -79,7 +76,7 @@ mod json_to_csv {
         // deserialize - from_reader() method needs to access io::Read::bytes() method
         let mut csv_util = model_csv_manga::model_csv_manga::Utils::new(None, input_reader);
         // whether table already exists or not, we'll create it in case it does not exist
-        let table_created = model_sqlite3_manga::model_sqlite3_manga::create_tables(db_full_paths);
+        let _table_created = model_sqlite3_manga::model_sqlite3_manga::create_tables(db_full_paths);
 
         // iterate through each row via csv_util.next() (it will deserialize it to MangaModel) and write it to SQLite
         let mut line_count = 0; // starting with 0, so that if first line returned is None, then we'll know that there is no line to process
@@ -296,7 +293,7 @@ mod json_to_csv {
         // into SQLite3 database 漫画.sqlite3
         if db_full_paths.is_empty() {
             // locate to see if '漫画.csv' exists in current directory
-            let mut db_full_paths = String::from("漫画.sqlite3");
+            let db_full_paths = String::from("漫画.sqlite3");
             if !std::path::Path::new(&db_full_paths).exists() {
                 // exit application via panic!()
                 panic!("Error: DB file '{}' does not exist", db_full_paths);
@@ -732,9 +729,9 @@ fn prune_url_map<'a>(
 }
 
 fn merge_and_prune_duplicates(
-    merged_duplicates_map: &mut Vec<MangaModel>,
-    url_map_mut: &mut std::collections::HashMap<String, Vec<MangaModel>>,
-    romaji_title_map_mut: &mut std::collections::HashMap<String, Vec<MangaModel>>,
+    _merged_duplicates_map: &mut Vec<MangaModel>,
+    _url_map_mut: &mut std::collections::HashMap<String, Vec<MangaModel>>,
+    _romaji_title_map_mut: &mut std::collections::HashMap<String, Vec<MangaModel>>,
 ) -> Vec<MangaModel> {
     //    let mut new_list = prune_romaji_map(
     //        romaji_title_map_mut,
@@ -762,12 +759,12 @@ fn main() {
     //    println!("bookmark_folders: {:#?}", bookmark_folders);
     //}
 
-    let mut mut_csv_writer_util = model_csv_manga::model_csv_manga::Utils::new(
+    let _mut_csv_writer_util = model_csv_manga::model_csv_manga::Utils::new(
         Some(output_writer_csv),
         Box::new(BufReader::new(io::stdin())),
     );
     // read in json (firefox bookmarks) and deserialize it into MangaModel - pass writer by ref
-    let mut mangas_mut = read_bookmarks_into_manga(&bookmark_folders).unwrap(); // let's panic if it fails
+    let mangas_mut = read_bookmarks_into_manga(&bookmark_folders).unwrap(); // let's panic if it fails
 
     // update local sqlite database with mangas_mut (Vec<MangaModel> list)
     for manga in &mangas_mut {
@@ -776,7 +773,7 @@ fn main() {
             //println!("manga: {:?}", manga);
             println!("manga => {}", manga); // since Display is impl
         }
-        let db_result = upsert_db(&db_full_paths, manga, debug_flag);
+        let _db_result = upsert_db(&db_full_paths, manga, debug_flag);
     }
 
     //    // lastly, want to split into 2 files, one that is sorted but unique URL in which

@@ -1,13 +1,13 @@
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
-use std::marker::{Send, Sync};
+
 
 pub mod model_manga {
     use serde::{Deserialize, Serialize};
     use std::marker::{Send, Sync};
     use url::Url;
 
-    use crate::my_libs::str_to_epoch_micros;
-    use crate::my_libs::from_epoch_to_str;
+    
+    
     use crate::my_libs::trim_quotes;
     use crate::my_libs::make_none_if_empty;
 
@@ -86,7 +86,7 @@ pub mod model_manga {
                 None => 0.0,
             };
             // compare &self to &Self (other)
-            let compare_chapters = |other: &Self| {
+            let _compare_chapters = |other: &Self| {
                 get_chapter(&self.possible_chapter).partial_cmp(&get_chapter(&other.possible_chapter))
             };
             // in case chapters are not provided, look at url_with_chapter (ideally, we can probably also look at last_update)
@@ -115,7 +115,7 @@ pub mod model_manga {
                     }
                 }
             };
-            let compare_url_with_chapter = |other: &Self| {
+            let _compare_url_with_chapter = |other: &Self| {
                 get_url_with_chapter(&self.possible_url_with_chapter)
                     .partial_cmp(&get_url_with_chapter(&other.possible_url_with_chapter))
             };

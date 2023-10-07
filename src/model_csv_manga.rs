@@ -3,7 +3,7 @@ pub mod model_csv_manga {
     use serde::{Deserialize, Serialize};
     use std::fmt::{self};
     use std::io::Write;
-    use std::ops::Deref;
+    
 
     use crate::model_manga;
     use crate::model_manga::model_manga::MangaModel;
@@ -252,7 +252,7 @@ pub mod model_csv_manga {
                 .comment(Some(b'#')) // allow # to be on first column to indicate comments
                 .from_reader(csv.as_bytes());
 
-            let mut csv_model_des: CsvMangaModel = match rdr.deserialize().next() {
+            let csv_model_des: CsvMangaModel = match rdr.deserialize().next() {
                 Some(Ok(result_record)) => result_record,
                 Some(Err(csv_error)) => {
                     let err_msg = format!("Error: {}", csv_error.to_string());
@@ -274,7 +274,7 @@ pub mod model_csv_manga {
             // so, we'll check for those two fields
             let binding = csv_model_des.chapter().clone();
             let ch: &str = binding;
-            let lm_epoch =
+            let _lm_epoch =
                 str_to_epoch_micros(csv_model_des.last_update().clone().to_string());
             let mut ch_removed_extra = -1;
             if ch.contains(".") || ch.contains("-") {
@@ -720,7 +720,7 @@ pub mod model_csv_manga {
             for result in util.next() {
                 match result {
                     Ok(result_record) => {
-                        let record = CsvMangaModel::new(&result_record);
+                        let _record = CsvMangaModel::new(&result_record);
                         #[cfg(debug_assertions)]
                         {
                             //
@@ -747,7 +747,7 @@ pub mod model_csv_manga {
         }
 
         pub fn write_csv_header(&mut self) -> Result<(), csv::Error> {
-            let mut record = CsvMangaModel::build_record_header();
+            let record = CsvMangaModel::build_record_header();
             self.csv_writer.write_record(&record)
         }
 
@@ -768,7 +768,7 @@ pub mod model_csv_manga {
                     )));
 
                     let m = CsvMangaModel::new(&mm);
-                    let mut record = m.build_record();
+                    let record = m.build_record();
                     // write it
                     self.csv_writer.write_record(&record).unwrap();
                     Some(m)
@@ -883,7 +883,7 @@ pub mod model_csv_manga {
                 K_EXPECTED_ROMANIZED_TITLE
             );
 
-            let mut csv_manga_model = CsvMangaModel::new(&manga_model.clone());
+            let csv_manga_model = CsvMangaModel::new(&manga_model.clone());
             assert_eq!(
                 csv_manga_model.title_romanized().clone(), // Unlike regular version, CSV verion should have UTF8 comma ("、") intact
                 K_EXPECTED_ROMANIZED_TITLE
@@ -945,13 +945,13 @@ THE,END
 
         #[test]
         fn test_title() {
-            let (manga, csv_manga) = make_default_model();
+            let (_manga, csv_manga) = make_default_model();
             assert_eq!(csv_manga.title(), K_MANGA_TITLE);
         }
 
         #[test]
         fn test_romanized_title() {
-            let (manga, csv_manga) = make_default_model();
+            let (_manga, csv_manga) = make_default_model();
             assert_eq!(
                 csv_manga.clone().title_romanized(),
                 K_EXPECTED_ROMANIZED_TITLE
@@ -965,7 +965,7 @@ THE,END
         // test serialization to CSV
         #[test]
         fn test_to_csv() {
-            let (manga, csv_manga) = make_default_model();
+            let (_manga, csv_manga) = make_default_model();
             let csv = csv_manga.to_csv();
             // note that to_csv() appends "\n" at tail
             //assert_eq!(&csv, &(K_MANGA_CSV.to_owned() + "\n"));

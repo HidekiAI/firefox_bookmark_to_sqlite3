@@ -1,5 +1,5 @@
-use crate::model_manga;
-use rusqlite;
+
+
 
 // SQLite3 Manga data model
 // TABLE manga_no_id:
@@ -8,15 +8,14 @@ pub mod model_sqlite3_manga {
     use core::panic;
     use rusqlite::{
         params,
-        types::{FromSql, FromSqlError},
-        Connection, Params, Result, Row, ToSql,
+        Connection, Result, Row,
     };
-    use std::{collections::HashMap, error::Error, f32::consts::E, path::Path};
+    use std::{path::Path};
 
     use crate::model_manga::{
         model_manga::MangaModel,
     };
-    use crate::my_libs::trim_quotes;
+    
     use crate::my_libs::make_none_if_empty;
 
     // NOTE: Unlike CSV and JSON, because SQLite3 is not meant as serde, we do not need
@@ -407,7 +406,7 @@ pub mod model_sqlite3_manga {
         // now seeek for the last occurence of chapter field in url_with_chapter and replace it with next_chapter
         let next_chapter_in_url = match manga.url_with_chapter() {
             Some(t) => {
-                let mut url_with_chapter = t.clone();
+                let _url_with_chapter = t.clone();
 
                 "".to_string() // TEMP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
             }
@@ -770,7 +769,7 @@ pub mod model_sqlite3_manga {
             super::create_tables(db_full_paths).unwrap();
 
             // now try inserting
-            let mut manga_no_id = make_sample_row();
+            let manga_no_id = make_sample_row();
             let manga_inserted = super::insert_manga(db_full_paths, &manga_no_id).unwrap();
 
             // now try inserting again, with same title+url (should fail due to unique constraints)
