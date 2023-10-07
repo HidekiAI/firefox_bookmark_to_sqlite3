@@ -7,6 +7,8 @@ pub mod model_csv_manga {
 
     use crate::model_manga;
     use crate::model_manga::model_manga::MangaModel;
+    use crate::my_libs::str_to_epoch_micros;
+    use crate::my_libs::from_epoch_to_str;
 
     // Custom deserialization function for Option<String>
     fn fn_deserialize_option_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -110,25 +112,6 @@ pub mod model_csv_manga {
     }
 
     impl CsvMangaModel {
-        pub fn from_epoch_to_str(epoch: i64) -> String {
-            // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
-            let from_epoch_timespan = chrono::NaiveDateTime::from_timestamp_opt(
-                epoch / 1_000_000,
-                (epoch % 1_000_000) as u32,
-            )
-            .unwrap();
-            let last_update_yyyymmdd_thhmmss =
-                from_epoch_timespan.format("%Y-%m-%dT%H:%M:%S").to_string(); // have to call to_string() to format
-            last_update_yyyymmdd_thhmmss // and then convert it back to &str
-        }
-        pub fn str_to_epoch_micros(time_yyyymmdd_thhmmss: String) -> i64 {
-            // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
-            let timespan_yyyymmdd_thhmmss =
-                chrono::NaiveDateTime::parse_from_str(&time_yyyymmdd_thhmmss, "%Y-%m-%dT%H:%M:%S")
-                    .unwrap()
-                    .timestamp_micros();
-            timespan_yyyymmdd_thhmmss
-        }
         fn fix_comma_in_string(s: &str) -> String {
             Utils::fix_comma_in_string(s)
         }
@@ -139,7 +122,7 @@ pub mod model_csv_manga {
         }
 
         pub fn get_last_update(&self) -> i64 {
-            CsvMangaModel::str_to_epoch_micros(self.last_update().clone().to_string())
+            str_to_epoch_micros(self.last_update().clone().to_string())
         }
         fn strip_chapter_from_url(url_with_chapters: String) -> (String, String) {
             Utils::strip_chapter_from_url(&url_with_chapters)
@@ -148,13 +131,13 @@ pub mod model_csv_manga {
             let bookmark_last_update_epoch_micros = match model.last_update() {
                 Some(ref s) => {
                     // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
-                    CsvMangaModel::str_to_epoch_micros(s.to_string().clone())
+                    str_to_epoch_micros(s.to_string().clone())
                 }
                 None => 0,
             };
 
             // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
-            let last_update = CsvMangaModel::from_epoch_to_str(bookmark_last_update_epoch_micros);
+            let last_update = from_epoch_to_str(bookmark_last_update_epoch_micros);
             // output: "uri_stripped_for_sorting","title","uri","chapter","last_update","notes","tags"
             // extract chapter if link indicates so...
 
@@ -292,7 +275,7 @@ pub mod model_csv_manga {
             let binding = csv_model_des.chapter().clone();
             let ch: &str = binding;
             let lm_epoch =
-                CsvMangaModel::str_to_epoch_micros(csv_model_des.last_update().clone().to_string());
+                str_to_epoch_micros(csv_model_des.last_update().clone().to_string());
             let mut ch_removed_extra = -1;
             if ch.contains(".") || ch.contains("-") {
                 // strip or keep all chars only up to "." or "-" so we can parse it as int
@@ -780,7 +763,7 @@ pub mod model_csv_manga {
                 model_manga::CASTAGNOLI.checksum(bookmark_uri.as_bytes()),
             ) {
                 Ok(mut mm) => {
-                    mm.set_last_update(Some(CsvMangaModel::from_epoch_to_str(
+                    mm.set_last_update(Some(from_epoch_to_str(
                         bookmark_last_update_epoch_micros,
                     )));
 

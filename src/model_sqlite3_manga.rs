@@ -14,8 +14,10 @@ pub mod model_sqlite3_manga {
     use std::{collections::HashMap, error::Error, f32::consts::E, path::Path};
 
     use crate::model_manga::{
-        model_manga::MangaModel, my_utils::make_none_if_empty, my_utils::trim_quotes,
+        model_manga::MangaModel,
     };
+    use crate::my_libs::trim_quotes;
+    use crate::my_libs::make_none_if_empty;
 
     // NOTE: Unlike CSV and JSON, because SQLite3 is not meant as serde, we do not need
     // to define data-model (schema) for SQLite3, and we'll directly use the model_manga_no_id::MangaModel

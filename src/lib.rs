@@ -63,6 +63,47 @@ pub mod my_libs {
         }
     }
 
+    pub fn from_epoch_to_str(epoch: i64) -> String {
+        // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
+        let from_epoch_timespan = chrono::NaiveDateTime::from_timestamp_opt(
+            epoch / 1_000_000,
+            (epoch % 1_000_000) as u32,
+        )
+        .unwrap();
+        let last_update_yyyymmdd_thhmmss =
+            from_epoch_timespan.format("%Y-%m-%dT%H:%M:%S").to_string(); // have to call to_string() to format
+        last_update_yyyymmdd_thhmmss // and then convert it back to &str
+    }
+    pub fn str_to_epoch_millis(time_yyyymmdd_thhmmss: String) -> i64 {
+        // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
+        let timespan_yyyymmdd_thhmmss =
+            chrono::NaiveDateTime::parse_from_str(&time_yyyymmdd_thhmmss, "%Y-%m-%dT%H:%M:%S")
+                .unwrap()
+                .timestamp_millis();
+        timespan_yyyymmdd_thhmmss
+    }
+    pub fn str_to_epoch_micros(time_yyyymmdd_thhmmss: String) -> i64 {
+        // convert the last_update i64 to datetime - last_update is encoded as unix epoch time in microseconds
+        let timespan_yyyymmdd_thhmmss =
+            chrono::NaiveDateTime::parse_from_str(&time_yyyymmdd_thhmmss, "%Y-%m-%dT%H:%M:%S")
+                .unwrap()
+                .timestamp_micros();
+        timespan_yyyymmdd_thhmmss
+    }
+    // format a chrono::DateTime<chrono::Utc> into a String in the format of "YYYY-MM-DDTHH:MM:SS"
+    pub fn datetime_to_string(datetime: &chrono::DateTime<chrono::Utc>) -> String {
+        datetime.format("%Y-%m-%dT%H:%M:%S").to_string()
+    }
+    pub fn string_datetime_to_epoch_millis(datetime: &str) -> i64 {
+        // Note that rfc3339() is formatted as "YYYY-MM-DDTHH:MM:SS+00:00" (with timezone offset)
+        // like so: `1996-12-19T16:39:57-08:00` but our format is "YYYY-MM-DDTHH:MM:SS" (no timezone offset)
+        // so we assume it is GMT/UTC timezone and append "+00:00" to it:
+        let datetime = format!("{}+00:00", datetime);
+        let datetime_fixed_offset =
+            chrono::DateTime::parse_from_rfc3339(datetime.as_str()).unwrap();
+        datetime_fixed_offset.timestamp_millis()
+    }
+
     #[cfg(test)]
     mod tests {
         #[allow(dead_code, unused_variables)]

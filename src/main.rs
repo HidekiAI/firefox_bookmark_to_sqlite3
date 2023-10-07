@@ -5,6 +5,7 @@ mod model_sqlite3_manga;
 
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
+use firefox_bookmark_to_csv::my_libs;
 use json_to_csv::upsert_db;
 use model_csv_manga::model_csv_manga::CsvMangaModel;
 use model_json_mozilla_bookmarks::model_json_mozilla_bookmarks::{
@@ -568,7 +569,7 @@ fn read_bookmarks_into_manga<'a>(
     let mut mangas_mut = Vec::new();
     for bookmark in bookmarks_sorted {
         // convert the last_modified i64 to datetime - last_modified is encoded as unix epoch time in microseconds
-        let str_last_modified = CsvMangaModel::from_epoch_to_str(*bookmark.last_modified());
+        let str_last_modified = my_libs::from_epoch_to_str(*bookmark.last_modified());
         let mut mm: MangaModel = match MangaModel::new_from_required_elements(
             bookmark.title(),
             bookmark.uri().clone().as_str(),

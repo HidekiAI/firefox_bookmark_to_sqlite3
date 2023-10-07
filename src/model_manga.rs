@@ -1,138 +1,15 @@
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
 use std::marker::{Send, Sync};
 
-pub mod my_utils {
-    pub trait Flattener<T: Clone> {
-        fn flatten(&self) -> Vec<T>;
-    }
-
-    impl<T: Clone> Flattener<T> for Vec<Option<T>> {
-        fn flatten(&self) -> Vec<T> {
-            self.iter()
-                .filter_map(|opt| opt.as_ref())
-                .cloned()
-                .collect()
-        }
-    }
-
-    // See Vec::into_flatten() in Rust 1.42.0, and slice_flatten() in Rust 1.43.0
-    // https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_flatten
-    // https://doc.rust-lang.org/std/primitive.slice.html#method.flatten
-    // Also, the one I was mostly inteested in, you can use concat() on Vec<Vec<T>> to flatten it
-    //impl<T: Clone> Flattener<T> for Vec<Vec<T>> {
-    //    fn flatten(&self) -> Vec<T> {
-    //        self.iter()
-    //            .flat_map(|inner_vec| inner_vec.iter())
-    //            .cloned()
-    //            .collect()
-    //    }
-    //}
-
-    // NOTE: There is already an Option::flatten() in Rust 1.40.0
-    //impl<T: Clone> Flattener<T> for Option<Option<T>> {
-    //    fn flatten(&self) -> Vec<T> {
-    //        match self {
-    //            Some(inner_opt) => inner_opt.iter().cloned().collect(),
-    //            None => Vec::new(),
-    //        }
-    //    }
-    //}
-
-    // Allow both String and &str to be passed in with magic of AsRef<T> and s.as_ref() combination
-    pub fn trim_quotes<T: AsRef<str>>(s: T) -> String {
-        let s = s.as_ref().trim().trim_end_matches('"').to_string();
-        if s.starts_with('"') || s.ends_with('"') || s.starts_with(' ') || s.ends_with(' ') {
-            trim_quotes(&s[1..s.len() - 1])
-        } else {
-            s.to_string()
-        }
-    }
-    // turn Some("") into None - NOTE: We do NOT want to return `Option<&'static str>` static lifetime, so we return Option<String>
-    pub fn make_none_if_empty<T: AsRef<str>>(s: Option<T>) -> Option<String> {
-        // no need to transform 's' since trim_quotes() will do it for us
-        match s.as_ref() {
-            Some(s) => match trim_quotes(s).is_empty() {
-                false => Some(trim_quotes(s)),
-                true => None,
-            },
-            None => None,
-        }
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use crate::model_manga::my_utils::make_none_if_empty;
-        use crate::model_manga::my_utils::trim_quotes;
-        use crate::model_manga::my_utils::Flattener;
-
-        #[test]
-        fn test_flatten_vec_option() {
-            let input = vec![Some(1), None, Some(2), None, Some(3)];
-            let expected_output = vec![1, 2, 3];
-            assert_eq!(input.flatten(), expected_output);
-        }
-
-        #[test]
-        fn test_flatten_vec_vec() {
-            let input_as_slices = vec![vec![1, 2], vec![3], vec![], vec![4, 5, 6]];
-            let expected_output = vec![1, 2, 3, 4, 5, 6];
-            // the trivial Vec::concat() way...  Note, in future, when stablized, we can use slice_flatten() here, and ro arrays, Vec.into_flatten()
-            assert_eq!(input_as_slices.concat(), expected_output);
-
-            //// Create a vector of arrays of strings
-            let mut vec = vec![["foo", "bar"], ["baz", "qux"], ["quux", "corge"]];
-
-            // Flatten the vector into a single vector of strings
-            //let flattened = vec.into_flattened();
-
-            // The flattened vector should contain all the strings from the original vector
-            //assert_eq!(flattened, vec!["foo", "bar", "baz", "qux", "quux", "corge"]);
-        }
-
-        #[test]
-        fn test_trim_quotes() {
-            assert_eq!(trim_quotes(""), "");
-            assert_eq!(trim_quotes(" "), "");
-            assert_eq!(trim_quotes(" \" "), "");
-            assert_eq!(trim_quotes(" \"    \" "), "");
-            assert_eq!(trim_quotes(" \" x     \" "), "x");
-            assert_eq!(trim_quotes(" \" x     \" "), "x");
-
-            // tests to make sure it can accept both String and &str
-            let s1 = "  \"Hello\"  ";
-            let s2 = String::from("  \"World\"  ");
-            let trimmed1 = trim_quotes(s1);
-            let trimmed2 = trim_quotes(s2);
-            println!("{}", trimmed1); // prints "Hello"
-            println!("{}", trimmed2); // prints "World"
-        }
-        fn test_make_none() {
-            assert_eq!(make_none_if_empty(Some("")), None);
-            assert_eq!(make_none_if_empty(Some(" ")), None);
-            assert_eq!(make_none_if_empty(Some(" \" ")), None);
-            assert_eq!(make_none_if_empty(Some(" \"    \" ")), None);
-            assert_eq!(
-                make_none_if_empty(Some(" \" x     \" ")),
-                Some("x".to_string())
-            );
-            let s1 = Some("  \"\"  ");
-            let s2 = Some(String::from("  \"Hello\"  "));
-            let none1 = make_none_if_empty(s1.as_deref());
-            let none2 = make_none_if_empty(s2.as_deref());
-            println!("{:?}", none1); // prints "None"
-            println!("{:?}", none2); // prints "Some(\"Hello\")"
-        }
-    }
-}
-
 pub mod model_manga {
     use serde::{Deserialize, Serialize};
     use std::marker::{Send, Sync};
     use url::Url;
 
-    use super::my_utils;
-    use my_utils::make_none_if_empty;
-    use my_utils::trim_quotes;
+    use crate::my_libs::str_to_epoch_micros;
+    use crate::my_libs::from_epoch_to_str;
+    use crate::my_libs::trim_quotes;
+    use crate::my_libs::make_none_if_empty;
 
     // Create a trait so that we ONLY allow either String or &str generic types
 
@@ -148,8 +25,8 @@ pub mod model_manga {
     // a string with commas to something internally legal, hence there may be
     // cases where we will encounter String that are using UTF8 commas (i.e. "，")
     // instead of ASCII commas (i.e. ",").
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)] // TODO: derive Sync and Send in future
-                                                               //#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Sync, Send)]
+    //#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Sync, Send)]
+    #[derive(Debug, Clone, Eq, Serialize, Deserialize)] // TODO: derive Sync and Send in future
     pub struct MangaModel {
         // NOTE: almost (if not) all fields are private, and enforces usage of accessor methods
         // Also, because we do not wish to have it mutate, we probably want it as &str but
@@ -161,10 +38,98 @@ pub mod model_manga {
         url: String,   // home page of manga (see impl of to_url and from_url validation)
         possible_url_with_chapter: Option<String>, // last read/updated chapter
         possible_chapter: Option<String>, // last read/updated chapter
-        possible_last_update: Option<String>,
+        possible_last_update: Option<String>,   // "YYYY-MM-DDTHH:mm:ss" (24hr)
+        possible_last_update_millis: Option<i64>,   // see chrono::NaiveDateTime
         possible_notes: Option<String>,
         tags: Vec<String>, // i.e. "#アニメ化" ; empty vec[] is same as None
         possible_my_anime_list: Option<String>, // provides author and artist
+    }
+
+    impl PartialEq for MangaModel {
+        fn eq(&self, other: &Self) -> bool {
+            self.title == other.title && self.url == other.url
+        }
+    }
+
+    // Example of how to use Ord and PartialOrd in unison:
+    // There could be multiple sources that builds MangaModel, one from the JSON (bookmark)
+    // and another from the SQLite3 database.  Scenario is that bookmark is read first, and
+    // then we'd query the database whether it has exact same title and url Some(Ordering::Equal)
+    // and then we then check the ID of each Manga and sqlite3 ID is NOT equal to bookmark ID
+    // NOTE: In such scenario, we'd usually need to look at Chapter and LastUpdate to determine
+    //       which one is newer, and in some cases, url_with_chapter may be different, so we
+    //       may need to look at that as well.
+    impl Ord for MangaModel {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            self.id.cmp(&other.id)
+        }
+    }
+    impl PartialOrd for MangaModel {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            match self.title.partial_cmp(&other.title) {
+                Some(std::cmp::Ordering::Equal) => self.url.partial_cmp(&other.url),
+                other => other,
+            }
+        }
+    }
+
+    // Not a trait, a method to check for chapter is Ordering::Equal, Ordering::less, or Ordering::Greater
+    // Commonly, the bookmark imported may have chapter newer/later/greater than the database
+    impl MangaModel {
+        // compares chapter, date, and possibly even url_with_chapter to determine if 'other' (rhs) is newer
+        // than self (lhs)
+        pub fn newer_cmp(&self, other: &Self) -> std::cmp::Ordering {
+            // NOTE String comparison causes some complications such as "100" is less than "5" because
+            // it only compares the first character, so we need to convert to float and compare
+            let get_chapter = |chapter: &Option<String>| match chapter {
+                Some(chapter) => chapter.replace("-", ".").parse::<f32>().unwrap_or(0.0),
+                None => 0.0,
+            };
+            // compare &self to &Self (other)
+            let compare_chapters = |other: &Self| {
+                get_chapter(&self.possible_chapter).partial_cmp(&get_chapter(&other.possible_chapter))
+            };
+            // in case chapters are not provided, look at url_with_chapter (ideally, we can probably also look at last_update)
+            // also if url_with_chapter is not provided on BOTH, then we'll look at url to see if it has (wrongly) been added
+            // with "chapter" in the url, and if so, we'll compare the chapter number of the URL
+            let get_url_with_chapter = |url_with_chapter: &Option<String>| match url_with_chapter {
+                Some(url_with_chapter) => url_with_chapter
+                    .split("-chapter-")
+                    .last()
+                    .unwrap_or(url_with_chapter)
+                    .replace("-", ".")
+                    .parse::<f32>()
+                    .unwrap_or(0.0),
+                None => {
+                    // if None, then check if url has "-chapter-" in it, and if so, then extract the chapter number
+                    match self.url.contains("-chapter-") {
+                        true => self
+                            .url
+                            .split("-chapter-")
+                            .last()
+                            .unwrap_or(&self.url)
+                            .replace("-", ".")
+                            .parse::<f32>()
+                            .unwrap_or(0.0),
+                        false => 0.0,
+                    }
+                }
+            };
+            let compare_url_with_chapter = |other: &Self| {
+                get_url_with_chapter(&self.possible_url_with_chapter)
+                    .partial_cmp(&get_url_with_chapter(&other.possible_url_with_chapter))
+            };
+
+            // last update is formated in format "YYYY-MM-DDTHH:mm:ss" (24hr) IF it came from CSV,
+            // but we'll NOT be sure what it is based off of JSON.  On SQLite, it is stored
+            // both as string (i.e. "2023-10-06T17:44:11") and as long-long epoch time
+            match self.chapter().partial_cmp(&other.chapter()) {
+                Some(std::cmp::Ordering::Equal) => std::cmp::Ordering::Equal,
+                Some(std::cmp::Ordering::Less) => std::cmp::Ordering::Less,
+                Some(std::cmp::Ordering::Greater) => std::cmp::Ordering::Greater,
+                None => std::cmp::Ordering::Equal,
+            }
+        }
     }
 
     // Display trait for pretty printing and to_string()
@@ -347,37 +312,6 @@ pub mod model_manga {
     }
 
     impl MangaModel {
-        // Allow both String and &str to be passed in with magic of AsRef<T> and s.as_ref() combination
-        //fn trim_quotes<T: AsRef<str>>(s: T) -> String {
-        //    let mut s = s.as_ref().trim().trim_end_matches('"').to_string();
-        //    if s.starts_with('"') || s.ends_with('"') || s.starts_with(' ') || s.ends_with(' ') {
-        //        trim_quotes(&s[1..s.len() - 1])
-        //    } else {
-        //        s.to_string()
-        //    }
-        //}
-        //// turn Some("") into None - NOTE: We do NOT want to return `Option<&'static str>` static lifetime, so we return Option<String>
-        //fn make_none<T: AsRef<str>>(s: Option<T>) -> Option<String> {
-        //    // no need to transform 's' since trim_quotes() will do it for us
-        //    match s {
-        //        Some(s) => match trim_quotes(s).is_empty() {
-        //            false => Some(trim_quotes(s)),
-        //            true => None,
-        //        },
-        //        None => None,
-        //    }
-        //}
-
-        pub fn romanize_title_self(&mut self) {
-            let title_romanized = match kakasi::is_japanese(self.title.as_str()) {
-                kakasi::IsJapanese::True => {
-                    Some(trim_quotes(kakasi::convert(self.title.as_str()).romaji))
-                }
-                _ => None,
-            };
-            self.possible_title_romanized = title_romanized;
-        }
-
         pub fn romanize_title(title: &str) -> Option<String> {
             match kakasi::is_japanese(title) {
                 kakasi::IsJapanese::True => Some(trim_quotes(kakasi::convert(title).romaji)),
@@ -401,36 +335,6 @@ pub mod model_manga {
             Option<String>, /*chapter*/
         ) {
             let url_parsed_as_str = url_parsed.as_str();
-            /*
-                        UPDATE manga SET
-                            last_update = REPLACE(last_update, '"', ''),
-                            notes = REPLACE(notes, '"', ''),
-
-                            tags = REPLACE(tags, '"', '')  ;
-
-            .mode csv
-            ;
-
-            .output manga.out.csv
-            ;
-
-            SELECT
-            --  m.id,
-                m.title,
-                m.title_romanized,
-                m.url,
-                m.url_with_chapter,
-                m.chapter,
-                m.last_update,
-                m.notes,
-                m.my_anime_list,
-                (SELECT GROUP_CONCAT(t.tag, ', ')
-                    FROM manga_to_tags_map AS mt
-                    JOIN tags AS t ON mt.tag_id = t.id
-                    WHERE mt.manga_id = m.id) AS tags
-            FROM manga AS m;
-            ;
-                        */
             // i.e. "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu-chapter-12-1/"
             // url_as_is = "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu-chapter-12-1/"
             // base_url = "https://some.example.com/tsuki-ga-michibiku-isekai-douchuu/"
@@ -538,6 +442,7 @@ pub mod model_manga {
                 possible_url_with_chapter: None,
                 possible_chapter: None,
                 possible_last_update: None,
+                possible_last_update_millis: None,
                 possible_notes: None,
                 tags: Vec::new(),
                 possible_my_anime_list: None,
@@ -582,6 +487,7 @@ pub mod model_manga {
                 possible_url_with_chapter: make_none_if_empty(url_with_chapter),
                 possible_chapter: make_none_if_empty(chapter),
                 possible_last_update: make_none_if_empty(last_update),
+                possible_last_update_millis: None,
                 possible_notes: make_none_if_empty(notes),
                 tags: tags,
                 possible_my_anime_list: make_none_if_empty(my_anime_list),
@@ -672,6 +578,9 @@ pub mod model_manga {
         pub fn last_update(&self) -> Option<String> {
             make_none_if_empty(self.possible_last_update.as_ref())
         }
+        pub fn last_update_millis(&self) -> Option<i64> {
+            self.possible_last_update_millis
+        }
         pub fn notes(&self) -> Option<String> {
             make_none_if_empty(self.possible_notes.as_ref())
         }
@@ -709,6 +618,9 @@ pub mod model_manga {
         }
         pub fn set_last_update(&mut self, last_update: Option<String>) {
             self.possible_last_update = last_update.map(|s| trim_quotes(s));
+        }
+        pub fn set_last_update_millis(&mut self, last_update: Option<i64>) {
+            self.possible_last_update_millis = last_update;
         }
         pub fn set_notes(&mut self, notes: Option<String>) {
             self.possible_notes = notes.map(|s| trim_quotes(s));
