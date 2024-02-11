@@ -1,21 +1,14 @@
-
-
-
 // SQLite3 Manga data model
 // TABLE manga_no_id:
 // id, title, title_romanized, url, chapter, url_with_chapter, last_update, notes, tags
 pub mod model_sqlite3_manga {
     use core::panic;
-    use rusqlite::{
-        params,
-        Connection, Result, Row,
-    };
-    use std::{path::Path};
+    use rusqlite::types::FromSql;
+    use rusqlite::{params, Connection, Result, Row};
+    use std::path::Path;
 
-    use crate::model_manga::{
-        model_manga::MangaModel,
-    };
-    
+    use crate::model_manga::model_manga::MangaModel;
+
     use crate::my_libs::make_none_if_empty;
 
     // NOTE: Unlike CSV and JSON, because SQLite3 is not meant as serde, we do not need
@@ -35,9 +28,10 @@ pub mod model_sqlite3_manga {
     // 4: url_with_chapter
     // 5: chapter
     // 6: last_update
-    // 7: notes
-    // 8: tags - foreign key to tag_group_maps table
-    // 9: my_anime_list
+    // 7: last_update_millis (epoch time i64 in milliseconds)
+    // 8: notes
+    // 9: tags - foreign key to tag_group_maps table
+    // 10: my_anime_list
     // append new columns to the end of the list, never between
     // Schemas:
     // CREATE TABLE manga (
@@ -76,6 +70,7 @@ pub mod model_sqlite3_manga {
                 url_with_chapter TEXT,
                 chapter TEXT,
                 last_update TEXT,
+                last_update_millis INTEGER,
                 notes TEXT,
                 tags TEXT,  -- just preserve the tags that may have come from original
                 my_anime_list TEXT,
@@ -142,35 +137,72 @@ pub mod model_sqlite3_manga {
     ) -> Result<Vec<MangaModel>> {
         let select_stmt =
         format!(
-            "SELECT m.id, m.title, m.title_romanized, m.url, m.url_with_chapter, m.chapter, m.last_update, m.notes, m.my_anime_list,
+            // 0: m.id, 
+            // 1: m.title, 
+            // 2: m.title_romanized, 
+            // 3: m.url, 
+            // 4: m.url_with_chapter, 
+            // 5: m.chapter, 
+            // 6: m.last_update, 
+            // 7: m.last_update_millis, // NOTE: This is i64, but we'll convert it to string because rusqlite doesn't support i64 in params! macro 
+            // 8: m.notes, 
+            // 9: m.my_anime_list, 
+            // 10: tag
+            "SELECT m.id, m.title, m.title_romanized, m.url, m.url_with_chapter, m.chapter, m.last_update, m.last_update_millis, m.notes, m.my_anime_list,
                     (SELECT GROUP_CONCAT(t.tag, ', ')
                         FROM manga_to_tags_map AS mt
                         JOIN tags AS t ON mt.tag_id = t.id
                         WHERE mt.manga_id = m.id) AS tags
-                FROM manga AS m {} ;", sql_where_clause);
+                FROM manga AS m {} ;", sql_where_clause);   // two ways to return ALL row-sets, either set sql_where_clause="", or set it to sql_where_clause="WHERE m.title LIKE '%" or something like that
         match Connection::open(db_full_paths) {
             Ok(conn) => {
+                #[cfg(debug_assertions)]
+                {
+                    println!("> select_manga: select_stmt: $sqlite3 {} '{}'", db_full_paths, select_stmt);
+                }
                 match conn.prepare(select_stmt.as_str()) {
                     Ok(mut stmt) => {
                         //let args_joined = args.join(",");   // Join the strings with a delimiter (as params)
                         //let sql_params = params![&args_joined]; // Now you can use args_joined in params!
-                        let sql_params = params![]; // Empty
-                        match stmt.query(sql_params) {
-                            Ok(mut rows) => {
+                        let sql_params_empty = params![]; // Empty because it was decided it's EASIER to pass in the sql_where_clause as a string (preconstructed with assumptions that table is referenced as 'm.*')
+                        match stmt.query(sql_params_empty) {
+                            Ok(mut rowsets) => {
+                                #[cfg(debug_assertions)]
+                                {
+                                    // WARNING: DO NOT dump or reference any of the rowsets here (i.e. rowset length/count), 
+                                    // because it will cause the rowsets to be consumed and the next() call will fail
+                                    println!(">> select_manga: select_stmt: SUCCESS");
+                                    println!(">>\t$sqlite3 {} '{}'", db_full_paths, select_stmt);
+                                }
+
                                 let mut manga_data = Vec::new();
-                                let mut possible_next_row = match rows.next() {
+                                let mut possible_next_row = match rowsets.next() {
                                     Ok(r) => r,
                                     Err(e) => {
-                                        println!("ERROR: Failed to get next row: {}", e);
+                                        println!("ERROR: select_manga (outer) - Failed to get next row: {}", e);
                                         None
                                     }
                                 };
-                                let transform_column = |col: Result<Option<String>, rusqlite::Error> | -> Result<Option<String>> {
+                                let transform_column_str = |col: Result<Option<String>, rusqlite::Error> | -> Result<Option<String>> {
                                     match col {
                                         Ok(Some(t)) => Ok(make_none_if_empty( Some(t))),
                                         Ok(None) => Ok(None),
                                         Err(e) => {
-                                            println!("ERROR: Failed to get column: {}", e);
+                                            println!("ERROR: fn transform_column_str - Failed to get column: {}", e);
+                                            Err(e)
+                                        }
+                                    }
+                                } ;
+                                let transform_column_i64 = |col: Result<Option<i64>, rusqlite::Error> | -> Result<Option<i64>> {
+                                    match col {
+                                        Ok(Some(t)) => Ok( 
+                                            match t == 0 {
+                                                true => None,
+                                                false => Some(t),
+                                            }),
+                                        Ok(None) => Ok(None),
+                                        Err(e) => {
+                                            println!("ERROR: fn transform_column_i64 - Failed to get column: {}", e);
                                             Err(e)
                                         }
                                     }
@@ -179,25 +211,26 @@ pub mod model_sqlite3_manga {
                                     Ok(MangaModel::with_values(
                                         row.get(0)?,
                                         row.get(1)?,
-                                        transform_column(row.get(2))?,
+                                        transform_column_str(row.get(2))?,
                                         row.get(3)?,
-                                        transform_column(row.get(4))?,
-                                        transform_column(row.get(5))?,
-                                        transform_column(row.get(6))?,
-                                        transform_column(row.get(7))?,
-                                        match row.get::<usize, String>(9) {
+                                        transform_column_str(row.get(4))?,
+                                        transform_column_str(row.get(5))?,
+                                        transform_column_str(row.get(6))?,  // 6: m.last_update
+                                        transform_column_i64(row.get(7))?,  // 7: m.last_update_millis - note, unsure how, but it knows to dynamically cast this as i64...
+                                        transform_column_str(row.get(8))?,  // 8: m.notes
+                                        match row.get::<usize, String>(10) {
                                             Ok(t) => t.split(",").map(|s| s.to_string()).collect(),
                                             Err(_) => Vec::new(),
                                         },
-                                        transform_column(row.get(8))?,
+                                        transform_column_str(row.get(9))?,  // 9: m.my_anime_list
                                     ))
                                 };
                                 while let Some(row) = possible_next_row {
                                     manga_data.push(transform_row(&row)?);
-                                    possible_next_row = match rows.next() {
+                                    possible_next_row = match rowsets.next() {
                                         Ok(r) => r,
                                         Err(e) => {
-                                            println!("ERROR: Failed to get next row: {}", e);
+                                            println!("ERROR: fn transform_row - select_manga (inner) - Failed to get next row: {}", e);
                                             None
                                         }
                                     };
@@ -208,19 +241,19 @@ pub mod model_sqlite3_manga {
                             }
                             Err(e) => {
                                 // most likely, it's because args/parsms are not correct
-                                println!("ERROR: Failed to query: {}", e);
+                                println!("ERROR: select_manga - Failed to query: {}", e);
                                 Err(e.into())
                             }
                         }
                     }
                     Err(e) => {
-                        println!("ERROR: Failed to prepare statement: {}", e);
+                        println!("ERROR: select_manga - Failed to prepare statement: {}", e);
                         Err(e.into())
                     }
                 }
             }
             Err(e) => {
-                println!("ERROR: Failed to open dataae '{}' : {}", db_full_paths, e);
+                println!("ERROR: select_manga - Failed to open dataae '{}' : {}", db_full_paths, e);
                 Err(e)
             }
         }
@@ -237,18 +270,23 @@ pub mod model_sqlite3_manga {
 
         // Option based vars needs to become concrete before we can use them in query
         // first, insert MangaModel so that we can get the id
+        let current_time_as_yyyymmddhhmmss =
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let current_time_as_millis = chrono::Local::now().timestamp_millis();
+
         conn.execute(
-            "INSERT OR IGNORE INTO manga (title, title_romanized, url, url_with_chapter, chapter, last_update, notes, tags, my_anime_list) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT OR IGNORE INTO manga (title, title_romanized, url, url_with_chapter, chapter, last_update, last_update_millis, notes, tags, my_anime_list) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             &[
-                &manga_no_id.title(),
-                match &manga_no_id.title_romanized() { Some(t) => &t.as_str(), None => ""   }, 
-                &manga_no_id.url (),
-                match &manga_no_id.url_with_chapter (){ Some(t) => &t.as_str(), None => ""   },
-                match &manga_no_id.chapter() { Some(t) => &t.as_str(), None => ""   },
-                match &manga_no_id.last_update() { Some(t) => &t.as_str(), None => ""   },
-                match &manga_no_id.notes() { Some(t) => &t.as_str(), None => ""   },
-                &manga_no_id.tags().join(","), 
-                match &manga_no_id.my_anime_list (){ Some(t) => &t.as_str(), None => ""   },
+                &manga_no_id.title(),   // ?1
+                match &manga_no_id.title_romanized() { Some(t) => &t.as_str(), None => "" },  // ?2
+                &manga_no_id.url (),    // ?3
+                match &manga_no_id.url_with_chapter (){ Some(t) => &t.as_str(), None => "" }, // ?4
+                match &manga_no_id.chapter() { Some(t) => &t.as_str(), None => "0"   },  // ?5
+                match &manga_no_id.last_update() { Some(t) => &t.as_str(), None => current_time_as_yyyymmddhhmmss.as_str()   },  // ?6
+                manga_no_id.last_update_millis().unwrap_or(current_time_as_millis).to_string().as_str(),  // ?7 - convert i64 to string because params! macro doesn't support i64
+                match &manga_no_id.notes() { Some(t) => &t.as_str(), None => "" },    // ?8
+                &manga_no_id.tags().join(","),  // ?9
+                match &manga_no_id.my_anime_list (){ Some(t) => &t.as_str(), None => "" },    // ?10
                 ],
         )?; //bail on error
 
@@ -336,20 +374,24 @@ pub mod model_sqlite3_manga {
             return Err("id not found".into());
         }
 
+        let current_time_as_yyyymmddhhmmss =
+            chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        let current_time_as_millis = chrono::Local::now().timestamp_millis();
         // OK, id exists, so proceed with update
         conn.execute(
-            "UPDATE manga SET title = ?1, title_romanized = ?2, url = ?3, url_with_chapter = ?4, chapter = ?5, last_update = ?6, notes = ?7, tags = ?8, my_anime_list = ?9 WHERE id = ?10",
+            "UPDATE manga SET title = ?1, title_romanized = ?2, url = ?3, url_with_chapter = ?4, chapter = ?5, last_update = ?6, last_update_millis = ?7, notes = ?8, tags = ?9, my_anime_list = ?10 WHERE id = ?11",
             &[
-                &manga.title(),
-                match &manga.title_romanized() { Some(t) => &t.as_str(), None => ""   }, 
-                &manga.url (),
-                match &manga.url_with_chapter() { Some(t) => &t.as_str(), None => ""   },
-                match &manga.chapter() { Some(t) => &t.as_str(), None => ""   },
-                match &manga.last_update() { Some(t) => &t.as_str(), None => ""   },
-                match &manga.notes() { Some(t) => &t.as_str(), None => ""   },
-                &manga.tags().join(","), 
-                match &manga.my_anime_list() { Some(t) => &t.as_str(), None => ""   },
-                &manga.id().to_string(),
+                &manga.title(), // ?1
+                match &manga.title_romanized() { Some(t) => &t.as_str(), None => "" },  // ?2
+                &manga.url (),  // ?3
+                match &manga.url_with_chapter() { Some(t) => &t.as_str(), None => "" }, // ?4
+                match &manga.chapter() { Some(t) => &t.as_str(), None => "" },  // ?5
+                match &manga.last_update() { Some(t) => &t.as_str(), None => current_time_as_yyyymmddhhmmss.as_str()   },  // ?6
+                manga.last_update_millis().unwrap_or(current_time_as_millis).to_string().as_str(),  // ?7 - convert i64 to string because params! macro doesn't support i64
+                match &manga.notes() { Some(t) => &t.as_str(), None => "" }, // ?8
+                &manga.tags().join(","),    // ?9
+                match &manga.my_anime_list() { Some(t) => &t.as_str(), None => "" },    // ?10
+                &manga.id().to_string(),    // ?11
                 ],
         )?;
 
@@ -377,7 +419,7 @@ pub mod model_sqlite3_manga {
         let next_chapter = if chapter_found.contains(".") || chapter_found.contains("-") {
             // if here, it means we have a decimal point or a subchapter-separator, so we'll increment the tail number
             let mut tail_number = chapter_found
-                .split(|c| c == '.' || c == '-')    // I love this split() function, quite flexible (and useful)
+                .split(|c| c == '.' || c == '-') // I love this split() function, quite flexible (and useful)
                 .collect::<Vec<&str>>() // have: "3.1" -> ["3", "1"], "3-1" -> ["3", "1"]
                 .last() // tail/last element will grab the "1"
                 .unwrap()
@@ -386,14 +428,14 @@ pub mod model_sqlite3_manga {
             tail_number += 1;
             // now we need to reconstruct the chapter field
             let mut next_chapter = chapter_found
-                .split(|c| c == '.' || c == '-')    // I love this split() function, quite flexible (and useful)
+                .split(|c| c == '.' || c == '-') // I love this split() function, quite flexible (and useful)
                 .collect::<Vec<&str>>() // have: "3.2.1" -> ["3", "2", "1"], "3-2-1" -> ["3", "2", "1"]
                 .iter()
                 .take(chapter_found.split(|c| c == '.' || c == '-').count() - 1) // grab all but the last element
                 .map(|s| s.to_string()) // convert &str to String
                 .collect::<Vec<String>>() // have: ["3", "2"]
                 .join("-"); // it could have been either "." or "-", but we'll force it to rejoin with "-" (i.e. ["3", "2"] -> "3-2")
-            // append the tail_number to next_chapter
+                            // append the tail_number to next_chapter
             next_chapter.push_str(&format!("-{}", tail_number)); // have: "3-2" -> "3-2-2"
             next_chapter
         } else {
@@ -817,6 +859,9 @@ pub mod model_sqlite3_manga {
                     // fail if last_update is Some("")
                     assert!(!m.last_update().clone().unwrap().is_empty());
                 }
+                if m.last_update_millis().is_some() {
+                    // nothing to test for last_update_millis, it'll default to 0 if None
+                }
                 if m.notes().is_some() {
                     // fail if notes is Some("")
                     assert!(!m.notes().clone().unwrap().is_empty());
@@ -834,6 +879,7 @@ pub mod model_sqlite3_manga {
                     assert_eq!(manga_inserted.url_with_chapter(), m.url_with_chapter());
                     assert_eq!(manga_inserted.chapter(), m.chapter());
                     assert_eq!(manga_inserted.last_update(), m.last_update());
+                    assert_eq!(manga_inserted.last_update_millis(), m.last_update_millis());
                     assert_eq!(manga_inserted.notes(), m.notes());
                     assert_eq!(manga_inserted.tags(), m.tags());
                     assert_eq!(manga_inserted.my_anime_list(), m.my_anime_list());

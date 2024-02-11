@@ -1,15 +1,12 @@
 pub const CASTAGNOLI: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISCSI);
 
-
 pub mod model_manga {
     use serde::{Deserialize, Serialize};
     use std::marker::{Send, Sync};
     use url::Url;
 
-    
-    
-    use crate::my_libs::trim_quotes;
     use crate::my_libs::make_none_if_empty;
+    use crate::my_libs::sanitize_string;
 
     // Create a trait so that we ONLY allow either String or &str generic types
 
@@ -38,8 +35,8 @@ pub mod model_manga {
         url: String,   // home page of manga (see impl of to_url and from_url validation)
         possible_url_with_chapter: Option<String>, // last read/updated chapter
         possible_chapter: Option<String>, // last read/updated chapter
-        possible_last_update: Option<String>,   // "YYYY-MM-DDTHH:mm:ss" (24hr)
-        possible_last_update_millis: Option<i64>,   // see chrono::NaiveDateTime
+        possible_last_update: Option<String>, // "YYYY-MM-DDTHH:mm:ss" (24hr)
+        possible_last_update_millis: Option<i64>, // see chrono::NaiveDateTime
         possible_notes: Option<String>,
         tags: Vec<String>, // i.e. "#アニメ化" ; empty vec[] is same as None
         possible_my_anime_list: Option<String>, // provides author and artist
@@ -87,7 +84,8 @@ pub mod model_manga {
             };
             // compare &self to &Self (other)
             let _compare_chapters = |other: &Self| {
-                get_chapter(&self.possible_chapter).partial_cmp(&get_chapter(&other.possible_chapter))
+                get_chapter(&self.possible_chapter)
+                    .partial_cmp(&get_chapter(&other.possible_chapter))
             };
             // in case chapters are not provided, look at url_with_chapter (ideally, we can probably also look at last_update)
             // also if url_with_chapter is not provided on BOTH, then we'll look at url to see if it has (wrongly) been added
@@ -303,6 +301,7 @@ pub mod model_manga {
                 None,
                 None,
                 None,
+                None, // last_update_millis
                 None,
                 Vec::new(),
                 None,
@@ -314,7 +313,7 @@ pub mod model_manga {
     impl MangaModel {
         pub fn romanize_title(title: &str) -> Option<String> {
             match kakasi::is_japanese(title) {
-                kakasi::IsJapanese::True => Some(trim_quotes(kakasi::convert(title).romaji)),
+                kakasi::IsJapanese::True => Some(sanitize_string(kakasi::convert(title).romaji)),
                 _ => None,
             }
         }
@@ -322,7 +321,7 @@ pub mod model_manga {
         pub fn csv_to_tags(csv: &str) -> Vec<String> {
             let mut tags: Vec<String> = Vec::new();
             for tag in csv.split(",") {
-                tags.push(trim_quotes(tag));
+                tags.push(sanitize_string(tag));
             }
             tags
         }
@@ -386,20 +385,20 @@ pub mod model_manga {
 
                         // return tuple of url_as_is, base_url, and chapter
                         (
-                            trim_quotes(url_parsed_as_str),     // url_as_is
+                            sanitize_string(url_parsed_as_str),     // url_as_is
                             make_none_if_empty(Some(base_url)), // base_url
                             make_none_if_empty(Some(chapter)),  // chapter
                         )
                     } else {
                         (
-                            trim_quotes(url_parsed_as_str),              // url_as_is
+                            sanitize_string(url_parsed_as_str),              // url_as_is
                             make_none_if_empty(Some(url_parsed_as_str)), // base_url
                             None,                                        // chapter
                         )
                     }
                 } else {
                     (
-                        trim_quotes(url_parsed_as_str), // url_as_is
+                        sanitize_string(url_parsed_as_str), // url_as_is
                         None,                           // base_url
                         None,                           // chapter
                     )
@@ -408,8 +407,8 @@ pub mod model_manga {
             // if base_url does not end with "/", then append it
             let possible_base_url = match base_url.clone() {
                 Some(str_base_url) => match str_base_url.ends_with("/") {
-                    true => Some(trim_quotes(str_base_url)),
-                    false => Some(trim_quotes(String::from(str_base_url) + "/")),
+                    true => Some(sanitize_string(str_base_url)),
+                    false => Some(sanitize_string(String::from(str_base_url) + "/")),
                 },
                 None => None,
             };
@@ -426,7 +425,7 @@ pub mod model_manga {
                 //);
             }
             (
-                trim_quotes(url_as_is),
+                sanitize_string(url_as_is),
                 make_none_if_empty(possible_base_url),
                 make_none_if_empty(chapter),
             )
@@ -457,6 +456,7 @@ pub mod model_manga {
             url_with_chapter: Option<String>,
             chapter: Option<String>,
             last_update: Option<String>,
+            last_update_millis: Option<i64>,
             notes: Option<String>,
             tags: Vec<String>,
             my_anime_list: Option<String>,
@@ -483,11 +483,11 @@ pub mod model_manga {
                 id: id,       // primary key - either prune or ignore if id is 0
                 title: title, // UTF8 encoded, uniqueness based on this and/or url
                 possible_title_romanized: make_none_if_empty(title_romanized),
-                url: trim_quotes(url_parsed), // validated via url::Url
+                url: sanitize_string(url_parsed), // validated via url::Url
                 possible_url_with_chapter: make_none_if_empty(url_with_chapter),
                 possible_chapter: make_none_if_empty(chapter),
                 possible_last_update: make_none_if_empty(last_update),
-                possible_last_update_millis: None,
+                possible_last_update_millis: last_update_millis,
                 possible_notes: make_none_if_empty(notes),
                 tags: tags,
                 possible_my_anime_list: make_none_if_empty(my_anime_list),
@@ -503,14 +503,14 @@ pub mod model_manga {
             id: u32,
         ) -> Result<MangaModel, Box<dyn std::error::Error>> {
             let possible_title_romanized =
-                Self::romanize_title(&trim_quotes(title_possibly_in_kanji));
+                Self::romanize_title(&sanitize_string(title_possibly_in_kanji));
 
             // validate url
-            let url_parsed = match Url::parse(&trim_quotes(url_with_possible_chapter)) {
+            let url_parsed = match Url::parse(&sanitize_string(url_with_possible_chapter)) {
                 Ok(validated_url) => Ok(validated_url),
                 Err(e) => Err(format!(
                     "Error:new_from_required_elements({}): {}\n\tRaw: '{:?}'",
-                    trim_quotes(url_with_possible_chapter),
+                    sanitize_string(url_with_possible_chapter),
                     e,
                     url_with_possible_chapter
                 )),
@@ -535,7 +535,7 @@ pub mod model_manga {
 
                     Ok(Self::with_values(
                         id,
-                        trim_quotes(title_possibly_in_kanji),
+                        sanitize_string(title_possibly_in_kanji),
                         make_none_if_empty(possible_title_romanized),
                         // assume possible_base_url is trimmed, quotes removed, and Some("") is None
                         match possible_base_url {
@@ -545,6 +545,7 @@ pub mod model_manga {
                         make_none_if_empty(Some(url_as_is.clone())),
                         possible_chapter.clone(), // assume possible_chapter is trimmed, quotes removed, and Some("") is None
                         None,
+                        None, // last_update_millis
                         None,
                         Vec::new(), // empty vec[] is same as None
                         None,
@@ -605,31 +606,31 @@ pub mod model_manga {
             self.title = title;
         }
         pub fn set_title_romanized(&mut self, title_romanized: Option<String>) {
-            self.possible_title_romanized = title_romanized.map(|s| trim_quotes(s));
+            self.possible_title_romanized = title_romanized.map(|s| sanitize_string(s));
         }
         pub fn set_url(&mut self, url: String) {
             self.url = url;
         }
         pub fn set_url_with_chapter(&mut self, url_with_chapter: Option<String>) {
-            self.possible_url_with_chapter = url_with_chapter.map(|s| trim_quotes(s));
+            self.possible_url_with_chapter = url_with_chapter.map(|s| sanitize_string(s));
         }
         pub fn set_chapter(&mut self, chapter: Option<String>) {
-            self.possible_chapter = chapter.map(|s| trim_quotes(s));
+            self.possible_chapter = chapter.map(|s| sanitize_string(s));
         }
         pub fn set_last_update(&mut self, last_update: Option<String>) {
-            self.possible_last_update = last_update.map(|s| trim_quotes(s));
+            self.possible_last_update = last_update.map(|s| sanitize_string(s));
         }
         pub fn set_last_update_millis(&mut self, last_update: Option<i64>) {
             self.possible_last_update_millis = last_update;
         }
         pub fn set_notes(&mut self, notes: Option<String>) {
-            self.possible_notes = notes.map(|s| trim_quotes(s));
+            self.possible_notes = notes.map(|s| sanitize_string(s));
         }
         pub fn set_tags(&mut self, tags: Vec<String>) {
             self.tags = tags;
         }
         pub fn set_my_anime_list(&mut self, my_anime_list: Option<String>) {
-            self.possible_my_anime_list = my_anime_list.map(|s| trim_quotes(s));
+            self.possible_my_anime_list = my_anime_list.map(|s| sanitize_string(s));
         }
     }
 
@@ -658,6 +659,7 @@ pub mod model_manga {
                 Some("https://example.com/manga/1".to_string()),
                 Some("1".to_string()),
                 Some("2021-01-01".to_string()),
+                None, // last_update_millis
                 Some("My notes".to_string()),
                 vec!["tag1".to_owned(), "tag2".to_owned()],
                 Some("https://myanimelist.net/manga/1".to_string()),

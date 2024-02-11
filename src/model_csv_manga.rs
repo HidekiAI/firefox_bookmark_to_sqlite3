@@ -3,12 +3,12 @@ pub mod model_csv_manga {
     use serde::{Deserialize, Serialize};
     use std::fmt::{self};
     use std::io::Write;
-    
 
     use crate::model_manga;
     use crate::model_manga::model_manga::MangaModel;
-    use crate::my_libs::str_to_epoch_micros;
+    use crate::my_libs::fix_comma_in_string;
     use crate::my_libs::from_epoch_to_str;
+    use crate::my_libs::str_to_epoch_micros;
 
     // Custom deserialization function for Option<String>
     fn fn_deserialize_option_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -111,14 +111,12 @@ pub mod model_csv_manga {
         }
     }
 
+    #[allow(dead_code)]
     impl CsvMangaModel {
-        fn fix_comma_in_string(s: &str) -> String {
-            Utils::fix_comma_in_string(s)
-        }
         // only exposing this function so that use-depencies of kakasi will be limited to this module only
         // but mainly, also want to preserve at least the UTF8 comma ("、") in the title
         fn romanized(title: &str) -> String {
-            CsvMangaModel::fix_comma_in_string(kakasi::convert(title).romaji.as_str())
+            fix_comma_in_string(kakasi::convert(title).romaji.as_str())
         }
 
         pub fn get_last_update(&self) -> i64 {
@@ -142,33 +140,31 @@ pub mod model_csv_manga {
             // extract chapter if link indicates so...
 
             CsvMangaModel {
-                title: CsvMangaModel::fix_comma_in_string(model.title()),
+                title: fix_comma_in_string(model.title()),
                 title_romanized: match model.title_romanized() {
-                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.as_str())),
+                    Some(ref s) => Some(fix_comma_in_string(s.as_str())),
                     None => None,
                 },
-                url: CsvMangaModel::fix_comma_in_string(&model.url()),
+                url: fix_comma_in_string(&model.url()),
                 url_with_chapter: match model.url_with_chapter() {
-                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.as_str())), // pretty sure commas are illegal in URLs, but just in case
+                    Some(ref s) => Some(fix_comma_in_string(s.as_str())), // pretty sure commas are illegal in URLs, but just in case
                     None => None,
                 },
                 chapter: match model.chapter() {
-                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.as_str())),
+                    Some(ref s) => Some(fix_comma_in_string(s.as_str())),
                     None => None,
                 },
                 last_update_yyyymmdd_thhmmss: Some(last_update.to_string()),
                 notes: match model.notes() {
-                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.as_str())),
+                    Some(ref s) => Some(fix_comma_in_string(s.as_str())),
                     None => None,
                 },
                 tags: match model.tags().len() > 0 {
-                    true => Some(CsvMangaModel::fix_comma_in_string(
-                        model.tags().join(";").as_str(),
-                    )), // NOTE: Using ';' instead of ',' for tags
+                    true => Some(fix_comma_in_string(model.tags().join(";").as_str())), // NOTE: Using ';' instead of ',' for tags
                     false => None,
                 },
                 my_anime_list: match model.my_anime_list() {
-                    Some(ref s) => Some(CsvMangaModel::fix_comma_in_string(s.as_str())),
+                    Some(ref s) => Some(fix_comma_in_string(s.as_str())),
                     None => None,
                 },
             }
@@ -269,44 +265,6 @@ pub mod model_csv_manga {
                 println!("\n>> {:?}", csv_model_des);
                 //println!(">> {}\n", record);
             }
-            // fail immediately if the CSV is not in the right format
-            // for now, the two that could possibly be used is chapter (as int) and last_update (as datetime)
-            // so, we'll check for those two fields
-            let binding = csv_model_des.chapter().clone();
-            let ch: &str = binding;
-            let _lm_epoch =
-                str_to_epoch_micros(csv_model_des.last_update().clone().to_string());
-            let mut ch_removed_extra = -1;
-            if ch.contains(".") || ch.contains("-") {
-                // strip or keep all chars only up to "." or "-" so we can parse it as int
-                let ch = ch
-                    .split('.')
-                    .next()
-                    .unwrap()
-                    .split('-')
-                    .next()
-                    .unwrap()
-                    .to_string();
-                // now  parse and make sure it's an integer, if not error out
-                ch_removed_extra = match ch.parse::<i32>() {
-                    Ok(num) => num,
-                    Err(parse_error) => {
-                        let err_msg = format!("Error: {}", parse_error.to_string());
-                        return Err(Box::from(err_msg));
-                    }
-                };
-            }
-
-            //let model = CsvMangaModel {
-            //    title: csv_model_des.title().into(),
-            //    url_with_chapters: csv_model_des.url_with_chapters().into(),
-            //    chapter: csv_model_des.chapter().into(),
-            //    last_update_YYYYmmddTHHMMSS: csv_model_des.last_update().into(),
-            //    notes: csv_model_des.notes().into(),
-            //    tags: csv_model_des.tags().into(),
-            //    url: Some(csv_model_des.url_mut().into()),
-            //    romanized_title: Some(csv_model_des.romanized_title_mut().into()),
-            //};
             // once deserialize, make it into MangaModel
             match MangaModel::new_from_required_elements(
                 csv_model_des.title().clone(),
@@ -466,27 +424,6 @@ pub mod model_csv_manga {
         #[serde(rename = "Tags")]
         tags: String,
     }
-    impl CsvMangaModelV1 {
-        // getter/accessor for the fields
-        pub fn title(&self) -> &str {
-            &self.title
-        }
-        pub fn url_with_chapters(&self) -> &str {
-            &self.url_with_chapters
-        }
-        pub fn chapter(&self) -> &str {
-            &self.chapter
-        }
-        pub fn last_update(&self) -> &str {
-            &self.last_update_yyyymmdd_thhmmss
-        }
-        pub fn notes(&self) -> &str {
-            &self.notes
-        }
-        pub fn tags(&self) -> &str {
-            &self.tags
-        }
-    }
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct CsvMangaModelV2 {
@@ -519,33 +456,6 @@ pub mod model_csv_manga {
 
         #[serde(rename = "Tags")]
         tags: String,
-    }
-    impl CsvMangaModelV2 {
-        // getter/accessor for the fields
-        pub fn title(&self) -> &str {
-            &self.title
-        }
-        pub fn url_with_chapters(&self) -> &str {
-            &self.url_with_chapters
-        }
-        pub fn chapter(&self) -> &str {
-            &self.chapter
-        }
-        pub fn last_update(&self) -> &str {
-            &self.last_update_yyyymmdd_thhmmss
-        }
-        pub fn notes(&self) -> &str {
-            &self.notes
-        }
-        pub fn tags(&self) -> &str {
-            &self.tags
-        }
-        pub fn romanized_title(&self) -> &str {
-            &self.romanized_title
-        }
-        pub fn url(&self) -> &str {
-            &self.url
-        }
     }
 
     pub struct Utils {
@@ -588,6 +498,7 @@ pub mod model_csv_manga {
         }
 
         // reset iterator by setting new input_reader
+        #[allow(dead_code)]
         pub fn reset(&mut self, input_reader: Box<dyn std::io::Read>) {
             self.csv_reader = csv::ReaderBuilder::new()
                 .has_headers(false) // without this, it'll ignore the first line, let alone if there is only one row, it will become empty record!
@@ -648,12 +559,6 @@ pub mod model_csv_manga {
                 }
                 None => None,
             }
-        }
-
-        pub fn fix_comma_in_string(s: &str) -> String {
-            // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
-            // so, we need to replace all commas with something else, such as "、"
-            s.replace(",", "、")
         }
 
         pub fn strip_chapter_from_url(
@@ -763,9 +668,7 @@ pub mod model_csv_manga {
                 model_manga::CASTAGNOLI.checksum(bookmark_uri.as_bytes()),
             ) {
                 Ok(mut mm) => {
-                    mm.set_last_update(Some(from_epoch_to_str(
-                        bookmark_last_update_epoch_micros,
-                    )));
+                    mm.set_last_update(Some(from_epoch_to_str(bookmark_last_update_epoch_micros)));
 
                     let m = CsvMangaModel::new(&mm);
                     let record = m.build_record();

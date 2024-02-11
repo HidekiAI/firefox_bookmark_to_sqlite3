@@ -31,3 +31,13 @@ node_modules/
 test-results/
 end2end/playwright-report/
 playwright/.cache/
+
+# Mine
+test/
+tests/
+
+
+# Mine
+*.bak
+*.bk
+

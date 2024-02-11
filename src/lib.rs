@@ -42,6 +42,22 @@ pub mod my_libs {
     //    }
     //}
 
+    // turns out there are few punctuation marks that we'd have problems in CSV or SQLite:
+    // * `,` (comma) - CSV will treat it as a new column, and SQLite will treat it as a new column
+    // * `"` (double quote) - CSV will treat it as a string delimiter, so strings such as "Notes: I don't know" will be treated as "Notes: I "
+    // * `'` (single quote) - SQLite will treat it as a string delimiter, so strings such as "Notes: I don't know" will be treated as "Notes: I "
+    // * ``` (ticks) - BASH scripts hates this, so we need to replace it with something else
+    // | sed 's/,/、/g' | sed 's/"/’/g' | sed "s/'/’/g"
+    pub fn sanitize_string<T: AsRef<str>>(s: T) -> String {
+        // first, trim the edges of the quotes, if any, BECAUSE we want to only sanitize the string INSIDE the quotes
+        let s = trim_quotes(s);
+        let s = s.replace(",", "、");
+        let s = s.replace("'", "’");
+        let s = s.replace("\"", "’");
+        let s = s.replace("`", "’");
+        s
+    }
+
     // Allow both String and &str to be passed in with magic of AsRef<T> and s.as_ref() combination
     pub fn trim_quotes<T: AsRef<str>>(s: T) -> String {
         let s = s.as_ref().trim().trim_end_matches('"').to_string();
@@ -61,6 +77,14 @@ pub mod my_libs {
             },
             None => None,
         }
+    }
+
+    // For CSV row-sets, when a cell contains a comma, EVEN IF IT IS INSIDE A QUOTED STRING, it will be treated as a new column
+    // on some of the CSV tools and libraries, so we need to replace all commas with something else, such as "、" (UTF8)
+    pub fn fix_comma_in_string(s: &str) -> String {
+        // NOTE: cannot have commmas inside strings for MOST CSV utilities fails to know the differences...
+        // so, we need to replace all commas with something else, such as "、"
+        s.replace(",", "、")
     }
 
     pub fn from_epoch_to_str(epoch: i64) -> String {

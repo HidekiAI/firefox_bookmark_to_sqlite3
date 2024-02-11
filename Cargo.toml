@@ -3,6 +3,9 @@ name = "firefox_bookmark_to_csv"
 version = "0.1.0"
 edition = "2021"
 
+[env]
+RUSTFLAGS = "-Z identify-missing-panics"
+
 [dependencies]
 kakasi = "0.1.0"
 serde = { version = "1.0.171", features = ["derive"] }
