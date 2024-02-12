@@ -46,3 +46,4 @@ tests/
 *.bak
 *.bk
 
+*.exe
