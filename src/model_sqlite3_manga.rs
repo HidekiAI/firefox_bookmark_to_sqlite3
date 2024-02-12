@@ -786,7 +786,7 @@ pub mod model_sqlite3_manga {
         #[test]
         fn test_create_tables() {
             //let db_full_paths = "/dev/shm/test_create_tables.db"; // only on Linux...
-            let db_full_paths = "tests/test_create_tables.db";
+            let db_full_paths = "samples/test_create_tables.db";
             // first, delete it if exists
             std::fs::remove_file(db_full_paths).unwrap_or_default();
 
@@ -803,7 +803,7 @@ pub mod model_sqlite3_manga {
         // test for insert_manga
         #[test]
         fn test_insert_manga() {
-            let db_full_paths = "tests/test_insert_manga.db";
+            let db_full_paths = "samples/test_insert_manga.db";
             // first, delete it if exists
             std::fs::remove_file(db_full_paths).unwrap_or_default();
 
@@ -892,7 +892,7 @@ pub mod model_sqlite3_manga {
 
         //#[test]
         //fn test_fetch_manga_data() {
-        //    let db_file_path = "tests/test_fetch_manga_test.sqlite3"; // Replace with your actual database file path
+        //    let db_file_path = "samples/test_fetch_manga_test.sqlite3"; // Replace with your actual database file path
         //    let title = "%"; // Replace with the title you want to search for
         //    let url = "%"; // Replace with the URL you want to search for
 
@@ -910,7 +910,7 @@ pub mod model_sqlite3_manga {
 
         #[test]
         fn test_select_manga() {
-            let db_file_path = "tests/test_select_manga.sqlite3"; // Replace with your actual database file path
+            let db_file_path = "samples/test_select_manga.sqlite3"; // Replace with your actual database file path
                                                                   //let sql_where_clause = format!("WHERE m.url LIKE '{}' AND m.title LIKE '{}'", "%", "%フロンティア%");
             let sql_where_clause = format!("WHERE m.url LIKE '{}' AND m.title LIKE '{}'", "%", "%");
             match super::select_manga(db_file_path, sql_where_clause.as_str()) {

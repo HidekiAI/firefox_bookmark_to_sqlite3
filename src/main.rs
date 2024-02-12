@@ -17,6 +17,7 @@ mod json_to_csv {
     //use serde_json::Value;
 
     use std::{
+        env,
         fs::File,
         io::{self, BufRead, BufReader, BufWriter, Write},
     };
@@ -31,13 +32,18 @@ mod json_to_csv {
     pub fn upsert_db(
         db_full_paths: &str,
         manga: &MangaModel,
+        continue_on_error: bool,
         debug_flag: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let upsert_result = model_sqlite3_manga::model_sqlite3_manga::upsert_manga(
+        //let upsert_result = model_sqlite3_manga::model_sqlite3_manga::upsert_manga(
+        //    db_full_paths,
+        //    &manga, // need to clone so that we do not steal/borrow the ownership of possible_csv_row/result
+        //);
+        let insert_result = model_sqlite3_manga::model_sqlite3_manga::insert_manga(
             db_full_paths,
             &manga, // need to clone so that we do not steal/borrow the ownership of possible_csv_row/result
         );
-        match upsert_result {
+        match insert_result {
             Ok(upsert_row_returned) => {
                 // do nothing (for now) if successfully inserted
                 if debug_flag {
@@ -60,7 +66,9 @@ mod json_to_csv {
                     insert_or_update_error, manga,
                 );
 
-                return Err(Box::new(insert_or_update_error));
+                if continue_on_error == false {
+                    return Err(Box::new(insert_or_update_error));
+                }
             }
         }
         Ok(())
@@ -105,7 +113,7 @@ mod json_to_csv {
                                 println!("#\tcsv_row (parsed): {:?}", &csv_row);
                             }
                             // write to SQLite - the model from DB SHOULD have correct Manga.ID
-                            match upsert_db(db_full_paths, &csv_row, debug_flag) {
+                            match upsert_db(db_full_paths, &csv_row, true, debug_flag) {
                                 Ok(_) => {
                                     update_count += 1;
                                 }
@@ -360,20 +368,22 @@ mod json_to_csv {
 
     #[test]
     fn test_parse_args() {
+        let tmp_dir = String::from(env::temp_dir().as_os_str().to_str().unwrap_or_default()); // sadly, Windows will fail on "/dev/shm/" so we'll have to use temp_dir()
+
         // Test with input file and output file
         let args = vec![
             String::from("-i"),
-            String::from("tests/input.json"),
+            String::from("samples/input.json"),
             String::from("-o"),
-            String::from("/dev/shm/output.csv"),
+            String::from(tmp_dir.clone() + "output.csv"),
             String::from("-c"),
-            String::from("/dev/shm/current_list.csv"),
+            String::from(tmp_dir.clone() + "current_list.csv"),
             String::from("-d"),
-            String::from("/dev/shm/parse_args.sqlite3"),
+            String::from(tmp_dir.clone() + "parse_args.sqlite3"),
         ];
 
         // prior to entering the test, we want to make sure db file exists because parse_args() will ASSUME that it exists
-        let db_full_paths = String::from("/dev/shm/parse_args.sqlite3");
+        let db_full_paths = tmp_dir.clone() + "parse_args.sqlite3".into();
         if !std::path::Path::new(&db_full_paths).exists() {
             // create it
             match model_sqlite3_manga::model_sqlite3_manga::create_tables(&db_full_paths) {
@@ -399,12 +409,14 @@ mod json_to_csv {
             }
         }
 
+        let tmp_dir = String::from(env::temp_dir().as_os_str().to_str().unwrap_or_default()); // sadly, Windows will fail on "/dev/shm/" so we'll have to use temp_dir()
+
         // read test JSON files and attempt to deserialize it
         let args = vec![
             String::from("-i"),
-            String::from("tests/input.json"),
+            String::from("samples/input.json"),
             String::from("-d"),
-            String::from("/dev/shm/parse_args.sqlite3"),
+            String::from(tmp_dir.clone() + "parse_args.sqlite3"),
         ];
         match parse_args(args) {
             Ok((_db_paths, input_json, possible_output_csv, _)) => {
@@ -561,6 +573,6 @@ fn main() {
             //println!("manga: {:?}", manga);
             println!("manga => {}", manga); // since Display is impl'ed for MangaModel, we can just print it out
         }
-        let _db_result = upsert_db(&db_full_paths, manga, debug_flag);
+        let _db_result = upsert_db(&db_full_paths, manga, true, debug_flag);
     }
 }

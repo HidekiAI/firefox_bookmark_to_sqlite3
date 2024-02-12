@@ -389,7 +389,7 @@ pub mod model_json_mozilla_bookmarks {
             //let bookmark: BookmarkRootFolder = serde_json::from_value(json_data).unwrap();
             // Because the new JSON is huge, it causes macro recursion overflow for json!(), so we'll
             // read from file instead...
-            let file = File::open("tests/input.prettified.json").unwrap();
+            let file = File::open("samples/input.prettified.json").unwrap();
             let rader = BufReader::new(file);
             let bookmark_from_file: BookmarkRootFolder = serde_json::from_reader(rader).unwrap();
 
